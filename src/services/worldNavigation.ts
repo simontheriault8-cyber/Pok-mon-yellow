@@ -65,21 +65,23 @@ export const POKEMON_YELLOW_MAPS: Record<number, string> = {
   0x23: 'Route 23 (Victoire)',
   0x24: 'Route 24 (Pont Pépite)',
   0x25: 'Route 25 (Maison Léo)',
+  0x29: 'Centre PKMN Jadielle',
+  0x2A: 'Boutique Jadielle (Mart)',
+  0x2B: 'École Pokémon Jadielle',
+  0x2C: 'Maison Jadielle',
   0x33: 'Forêt de Jade (Viridian Forest)',
+  0x3A: 'Centre PKMN Argenta',
   0x3B: 'Mont Sélénite 1 (Mt Moon)',
-  // Centres Pokémon intérieurs
-  0x44: 'Centre PKMN Jadielle',
-  0x45: 'Centre PKMN Argenta',
-  0x46: 'Centre PKMN Azuria',
-  0x47: 'Centre PKMN Lavanville',
-  0x48: 'Centre PKMN Carmin',
-  0x49: 'Centre PKMN Céladopole',
-  0x4A: 'Centre PKMN Parmanie',
-  0x4B: 'Centre PKMN Cramois\'Île',
-  0x4C: 'Centre PKMN Plateau Indigo',
-  0x4D: 'Centre PKMN Safrania',
+  0x44: 'Centre PKMN Azuria',
   0x54: 'Centre PKMN Route 4 (Mt Sélénite)',
   0x58: 'Centre PKMN Route 10 (Grotte)',
+  0x5E: 'Centre PKMN Carmin',
+  0x64: 'Centre PKMN Lavanville',
+  0x68: 'Centre PKMN Céladopole',
+  0x76: 'Centre PKMN Parmanie',
+  0x87: 'Centre PKMN Safrania',
+  0x97: 'Centre PKMN Cramois\'Île',
+  0xAC: 'Centre PKMN Plateau Indigo',
 };
 
 // Registered Pokémon Centers across Kanto with exact door warps & nurse positions
@@ -88,8 +90,8 @@ export const POKECENTERS: PokecenterLocation[] = [
     id: 'viridian',
     name: 'Centre PKMN Jadielle',
     outdoorMapId: 0x01,
-    doorCoords: { x: 13, y: 25 },
-    indoorMapId: 0x44,
+    doorCoords: { x: 23, y: 25 },
+    indoorMapId: 0x29,
     nurseCoords: { x: 3, y: 2 },
   },
   {
@@ -97,7 +99,7 @@ export const POKECENTERS: PokecenterLocation[] = [
     name: 'Centre PKMN Argenta',
     outdoorMapId: 0x02,
     doorCoords: { x: 13, y: 25 },
-    indoorMapId: 0x45,
+    indoorMapId: 0x3A,
     nurseCoords: { x: 3, y: 2 },
   },
   {
@@ -113,7 +115,7 @@ export const POKECENTERS: PokecenterLocation[] = [
     name: 'Centre PKMN Azuria',
     outdoorMapId: 0x03,
     doorCoords: { x: 19, y: 17 },
-    indoorMapId: 0x46,
+    indoorMapId: 0x44,
     nurseCoords: { x: 3, y: 2 },
   },
   {
@@ -121,7 +123,7 @@ export const POKECENTERS: PokecenterLocation[] = [
     name: 'Centre PKMN Carmin sur Mer',
     outdoorMapId: 0x05,
     doorCoords: { x: 11, y: 3 },
-    indoorMapId: 0x48,
+    indoorMapId: 0x5E,
     nurseCoords: { x: 3, y: 2 },
   },
   {
@@ -137,7 +139,7 @@ export const POKECENTERS: PokecenterLocation[] = [
     name: 'Centre PKMN Lavanville',
     outdoorMapId: 0x04,
     doorCoords: { x: 5, y: 5 },
-    indoorMapId: 0x47,
+    indoorMapId: 0x64,
     nurseCoords: { x: 3, y: 2 },
   },
   {
@@ -145,7 +147,7 @@ export const POKECENTERS: PokecenterLocation[] = [
     name: 'Centre PKMN Céladopole',
     outdoorMapId: 0x06,
     doorCoords: { x: 41, y: 9 },
-    indoorMapId: 0x49,
+    indoorMapId: 0x68,
     nurseCoords: { x: 3, y: 2 },
   },
   {
@@ -153,7 +155,7 @@ export const POKECENTERS: PokecenterLocation[] = [
     name: 'Centre PKMN Parmanie',
     outdoorMapId: 0x07,
     doorCoords: { x: 19, y: 27 },
-    indoorMapId: 0x4A,
+    indoorMapId: 0x76,
     nurseCoords: { x: 3, y: 2 },
   },
   {
@@ -161,7 +163,7 @@ export const POKECENTERS: PokecenterLocation[] = [
     name: 'Centre PKMN Safrania',
     outdoorMapId: 0x0A,
     doorCoords: { x: 9, y: 29 },
-    indoorMapId: 0x4D,
+    indoorMapId: 0x87,
     nurseCoords: { x: 3, y: 2 },
   },
   {
@@ -169,7 +171,7 @@ export const POKECENTERS: PokecenterLocation[] = [
     name: 'Centre PKMN Cramois\'Île',
     outdoorMapId: 0x08,
     doorCoords: { x: 11, y: 11 },
-    indoorMapId: 0x4B,
+    indoorMapId: 0x97,
     nurseCoords: { x: 3, y: 2 },
   },
   {
@@ -177,7 +179,7 @@ export const POKECENTERS: PokecenterLocation[] = [
     name: 'Centre PKMN Plateau Indigo',
     outdoorMapId: 0x09,
     doorCoords: { x: 9, y: 5 },
-    indoorMapId: 0x4C,
+    indoorMapId: 0xAC,
     nurseCoords: { x: 3, y: 2 },
   },
 ];
@@ -186,31 +188,31 @@ export const POKECENTERS: PokecenterLocation[] = [
 const MAP_ADJACENCY: Record<number, number[]> = {
   0x00: [0x0C, 0x22], // Bourg Palette -> Route 1, Route 21
   0x0C: [0x00, 0x01], // Route 1 -> Bourg Palette, Jadielle
-  0x01: [0x0C, 0x0D, 0x21, 0x44], // Jadielle -> Route 1, Route 2, Route 22, Pokécenter
-  0x44: [0x01], // Pokécenter Jadielle -> Jadielle
+  0x01: [0x0C, 0x0D, 0x21, 0x29], // Jadielle -> Route 1, Route 2, Route 22, Pokécenter
+  0x29: [0x01], // Pokécenter Jadielle -> Jadielle
   0x0D: [0x01, 0x02, 0x33], // Route 2 -> Jadielle, Argenta, Forêt de Jade
   0x33: [0x0D], // Forêt de Jade -> Route 2
-  0x02: [0x0D, 0x0E, 0x45], // Argenta -> Route 2, Route 3, Pokécenter
-  0x45: [0x02], // Pokécenter Argenta -> Argenta
+  0x02: [0x0D, 0x0E, 0x3A], // Argenta -> Route 2, Route 3, Pokécenter
+  0x3A: [0x02], // Pokécenter Argenta -> Argenta
   0x0E: [0x02, 0x0F, 0x3B], // Route 3 -> Argenta, Route 4, Mt Sélénite
   0x0F: [0x0E, 0x03, 0x54], // Route 4 -> Route 3, Azuria, Pokécenter Mt Moon
   0x54: [0x0F], // Pokécenter Mt Moon -> Route 4
-  0x03: [0x0F, 0x10, 0x14, 0x24, 0x46], // Azuria -> Route 4, Route 5, Route 9, Route 24, Pokécenter
-  0x46: [0x03], // Pokécenter Azuria -> Azuria
+  0x03: [0x0F, 0x10, 0x14, 0x24, 0x44], // Azuria -> Route 4, Route 5, Route 9, Route 24, Pokécenter
+  0x44: [0x03], // Pokécenter Azuria -> Azuria
   0x24: [0x03, 0x25], // Route 24 -> Azuria, Route 25
   0x25: [0x24], // Route 25 -> Route 24
   0x10: [0x03, 0x0A], // Route 5 -> Azuria, Safrania
-  0x0A: [0x10, 0x11, 0x12, 0x13, 0x4D], // Safrania
-  0x4D: [0x0A], // Pokécenter Safrania -> Safrania
+  0x0A: [0x10, 0x11, 0x12, 0x13, 0x87], // Safrania
+  0x87: [0x0A], // Pokécenter Safrania -> Safrania
   0x11: [0x0A, 0x05], // Route 6 -> Safrania, Carmin
-  0x05: [0x11, 0x16, 0x48], // Carmin -> Route 6, Route 11, Pokécenter
-  0x48: [0x05], // Pokécenter Carmin -> Carmin
+  0x05: [0x11, 0x16, 0x5E], // Carmin -> Route 6, Route 11, Pokécenter
+  0x5E: [0x05], // Pokécenter Carmin -> Carmin
   0x12: [0x0A, 0x06], // Route 7 -> Safrania, Céladopole
-  0x06: [0x12, 0x1C, 0x49], // Céladopole
-  0x49: [0x06], // Pokécenter Céladopole -> Céladopole
+  0x06: [0x12, 0x1C, 0x68], // Céladopole
+  0x68: [0x06], // Pokécenter Céladopole -> Céladopole
   0x13: [0x0A, 0x04], // Route 8 -> Safrania, Lavanville
-  0x04: [0x13, 0x17, 0x18, 0x47], // Lavanville -> Route 8, Route 12, Route 10, Pokécenter
-  0x47: [0x04], // Pokécenter Lavanville -> Lavanville
+  0x04: [0x13, 0x17, 0x18, 0x64], // Lavanville -> Route 8, Route 12, Route 10, Pokécenter
+  0x64: [0x04], // Pokécenter Lavanville -> Lavanville
   0x14: [0x03, 0x15], // Route 9 -> Azuria, Route 10 Nord
   0x15: [0x14, 0x18], // Route 10 Nord -> Route 9, Route 10 Sud
   0x18: [0x15, 0x04, 0x58], // Route 10 Sud -> Lavanville, Pokécenter Grotte
@@ -219,20 +221,20 @@ const MAP_ADJACENCY: Record<number, number[]> = {
   0x19: [0x17, 0x1A], // Route 13 -> Route 12, Route 14
   0x1A: [0x19, 0x1B], // Route 14 -> Route 13, Route 15
   0x1B: [0x1A, 0x07], // Route 15 -> Route 14, Parmanie
-  0x07: [0x1B, 0x1E, 0x1F, 0x4A], // Parmanie -> Route 15, Route 18, Route 19, Pokécenter
-  0x4A: [0x07], // Pokécenter Parmanie -> Parmanie
+  0x07: [0x1B, 0x1E, 0x1F, 0x76], // Parmanie -> Route 15, Route 18, Route 19, Pokécenter
+  0x76: [0x07], // Pokécenter Parmanie -> Parmanie
   0x1C: [0x06, 0x1D], // Route 16 -> Céladopole, Route 17
   0x1D: [0x1C, 0x1E], // Route 17 -> Route 16, Route 18
   0x1E: [0x1D, 0x07], // Route 18 -> Route 17, Parmanie
   0x1F: [0x07, 0x20], // Route 19 -> Parmanie, Route 20
   0x20: [0x1F, 0x08], // Route 20 -> Route 19, Cramois'Île
-  0x08: [0x20, 0x22, 0x4B], // Cramois'Île -> Route 20, Route 21, Pokécenter
-  0x4B: [0x08], // Pokécenter Cramois'Île -> Cramois'Île
+  0x08: [0x20, 0x22, 0x97], // Cramois'Île -> Route 20, Route 21, Pokécenter
+  0x97: [0x08], // Pokécenter Cramois'Île -> Cramois'Île
   0x22: [0x08, 0x00], // Route 21 -> Cramois'Île, Bourg Palette
   0x21: [0x01, 0x23], // Route 22 -> Jadielle, Route 23
   0x23: [0x21, 0x09], // Route 23 -> Route 22, Plateau Indigo
-  0x09: [0x23, 0x4C], // Plateau Indigo -> Route 23, Pokécenter
-  0x4C: [0x09], // Pokécenter Plateau Indigo -> Plateau Indigo
+  0x09: [0x23, 0xAC], // Plateau Indigo -> Route 23, Pokécenter
+  0xAC: [0x09], // Pokécenter Plateau Indigo -> Plateau Indigo
 };
 
 // BFS Pathfinding on Map Topology Graph

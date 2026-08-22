@@ -61,6 +61,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     aliveCount: number;
     closestPokecenter: NavigationRoute | null;
     dumpD350: number[];
+    dumpD430: number[];
   }>({
     currentMapId: 0,
     mapName: 'Initialisation...',
@@ -78,6 +79,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     aliveCount: 0,
     closestPokecenter: null,
     dumpD350: [],
+    dumpD430: [],
   });
 
   useEffect(() => {
@@ -116,10 +118,16 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
         if (curHp > 0) aliveCount++;
       }
 
-      // Extract Navigation D350-D37F dump (Maps, Warps, Coords)
+      // Extract Navigation D350-D37F dump (Maps, Coords)
       const dumpD350: number[] = [];
       for (let i = 0xD350; i <= 0xD37F; i++) {
         dumpD350.push(mmu.read(i));
+      }
+
+      // Extract Warps D430-D44F dump
+      const dumpD430: number[] = [];
+      for (let i = 0xD430; i <= 0xD44F; i++) {
+        dumpD430.push(mmu.read(i));
       }
 
       if (nav) {
@@ -140,6 +148,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           aliveCount,
           closestPokecenter: nav.closestPokecenter,
           dumpD350,
+          dumpD430,
         });
       }
 
@@ -228,7 +237,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
         {/* Warps / Doors Count */}
         <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
           <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span className="flex items-center gap-1"><DoorOpen className="w-3 h-3 text-emerald-500" /> Portes / Warps (D36C)</span>
+            <span className="flex items-center gap-1"><DoorOpen className="w-3 h-3 text-emerald-500" /> Portes / Warps (D436)</span>
             <span className="opacity-60">{hexFormat(navData.warpCount)}</span>
           </span>
           <span className="font-bold text-emerald-300">
@@ -295,11 +304,15 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           )}
         </div>
 
-        {/* Hex Dump D350-D37F (Navigation / Maps / Warps) */}
+        {/* Hex Dumps (Navigation D350-D37F & Warps D430-D44F) */}
         <div className="col-span-2 mt-1 pt-1.5 border-t border-emerald-900/50 flex flex-col gap-1">
           <div className="text-[9px] leading-tight text-emerald-600/80 break-all">
-            <strong className="text-emerald-500">D350-D37F (Maps/Coords/Warps):</strong>{' '}
+            <strong className="text-emerald-500">D350-D37F (Maps/Coords):</strong>{' '}
             {navData.dumpD350.map((b) => b.toString(16).padStart(2, '0')).join(' ')}
+          </div>
+          <div className="text-[9px] leading-tight text-emerald-600/80 break-all">
+            <strong className="text-emerald-500">D430-D44F (Warp Table):</strong>{' '}
+            {navData.dumpD430.map((b) => b.toString(16).padStart(2, '0')).join(' ')}
           </div>
         </div>
 

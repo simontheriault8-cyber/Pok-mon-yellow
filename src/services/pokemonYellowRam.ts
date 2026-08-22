@@ -122,13 +122,13 @@ export const POKEMON_YELLOW_RAM = {
   TILE_PLAYER_STANDING_EN: 0xD35B,
   TILE_PLAYER_STANDING_FR: 0xD35A,
 
-  // Number of Warps (doors/exits) on current map (0xD36C in EN)
-  WARP_COUNT_EN: 0xD36C,
-  WARP_COUNT_FR: 0xD36B,
+  // Number of Warps (doors/exits) on current map (0xD436 in Yellow EN, 0xD435 in FR)
+  WARP_COUNT_EN: 0xD436,
+  WARP_COUNT_FR: 0xD435,
 
-  // Warp table entries start address (0xD36D in EN, each warp is 4 bytes: [Y, X, target_warp_id, target_map_id])
-  WARP_ENTRIES_BASE_EN: 0xD36D,
-  WARP_ENTRIES_BASE_FR: 0xD36C,
+  // Warp table entries start address (0xD437 in EN, each warp is 4 bytes: [Y, X, target_warp_id, target_map_id])
+  WARP_ENTRIES_BASE_EN: 0xD437,
+  WARP_ENTRIES_BASE_FR: 0xD436,
 
   // Text box / Menu Joypad input lock status (0 = ready for input, >0 = locked or scrolling)
   JOY_IGNORE_EN: 0xCD6B,
