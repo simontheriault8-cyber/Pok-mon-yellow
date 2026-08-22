@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { GameBoy } from '../emulator/gameboy';
 import { POKEMON_YELLOW_RAM, resolveAddr } from '../services/pokemonYellowRam';
-import { readNavigationState, NavigationRoute } from '../services/worldNavigation';
-import { Cpu, Sparkles, Compass, MapPin, DoorOpen, ShieldAlert, HeartPulse } from 'lucide-react';
+import { readNavigationState, NavigationRoute, POKEMON_YELLOW_MAPS, WarpInfo } from '../services/worldNavigation';
+import { LocalNavigationEngine, AutoHealProgress } from '../services/localNavigation';
+import { Cpu, Sparkles, Compass, MapPin, DoorOpen, ShieldAlert, HeartPulse, Play, Square, RefreshCw } from 'lucide-react';
 import { TrainerBotMode } from '../services/simpleTrainerBot';
 
 interface RamViewerProps {
@@ -14,6 +15,31 @@ interface RamViewerProps {
 
 export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: RamViewerProps) {
   const [elapsedMs, setElapsedMs] = useState<number>(0);
+  const navEngineRef = useRef<LocalNavigationEngine>(new LocalNavigationEngine());
+  const [healProgress, setHealProgress] = useState<AutoHealProgress | null>(null);
+  const [isHealRunning, setIsHealRunning] = useState<boolean>(false);
+
+  useEffect(() => {
+    navEngineRef.current.setEmulator(emulator);
+    navEngineRef.current.onProgress((progress) => {
+      setHealProgress(progress);
+      if (progress.status === 'completed' || progress.status === 'error' || progress.status === 'idle') {
+        setIsHealRunning(false);
+      } else {
+        setIsHealRunning(true);
+      }
+    });
+  }, [emulator]);
+
+  const handleTriggerAutoHeal = async () => {
+    if (isHealRunning) {
+      navEngineRef.current.stop();
+      setIsHealRunning(false);
+    } else {
+      setIsHealRunning(true);
+      await navEngineRef.current.executeAutoHealSequence(true);
+    }
+  };
 
   useEffect(() => {
     let animationFrameId: number;
@@ -311,27 +337,57 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           </div>
         )}
 
-        {/* Module 1: Closest Pokécenter Target & Status */}
-        <div className="col-span-2 flex flex-col bg-emerald-950/30 p-2 rounded border border-emerald-800/40 shadow-sm">
-          <span className="text-emerald-500 uppercase font-bold flex justify-between items-center text-[10px]">
-            <span className="flex items-center gap-1"><HeartPulse className="w-3.5 h-3.5 text-emerald-400" /> Module 1 : Centre Pokémon le plus proche</span>
-            <span className="font-bold text-emerald-400">Équipe : {navData.aliveCount}/{navData.partyCount} en vie</span>
-          </span>
+        {/* Module 1 & Module 2: Auto-Navigation & Auto-Heal Engine */}
+        <div className="col-span-2 flex flex-col bg-emerald-950/30 p-2.5 rounded border border-emerald-800/50 shadow-sm gap-2">
+          <div className="flex justify-between items-center text-[10px]">
+            <span className="text-emerald-400 uppercase font-bold flex items-center gap-1.5">
+              <HeartPulse className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Module 1 & 2 : Navigation Locale & Auto-Soin</span>
+            </span>
+            <span className="font-bold text-emerald-300 bg-emerald-900/60 px-1.5 py-0.5 rounded border border-emerald-700/40">
+              Équipe : {navData.aliveCount}/{navData.partyCount} en vie
+            </span>
+          </div>
+
           {navData.closestPokecenter ? (
-            <div className="mt-1 flex flex-col gap-0.5 text-emerald-200">
-              <div className="font-bold text-emerald-300 flex items-center justify-between">
+            <div className="flex flex-col gap-1 bg-black/40 p-2 rounded border border-emerald-900/60">
+              <div className="font-bold text-emerald-300 flex items-center justify-between text-[11px]">
                 <span>📍 {navData.closestPokecenter.targetPokecenter.name}</span>
-                <span className="text-[10px] bg-emerald-900/50 px-1.5 py-0.5 rounded text-emerald-400 border border-emerald-700/30">
-                  {navData.closestPokecenter.isAlreadyInside ? 'À l\'intérieur' : `Distance : ~${navData.closestPokecenter.directDistance} pas`}
+                <span className="text-[10px] bg-emerald-900/60 px-2 py-0.5 rounded text-emerald-300 border border-emerald-600/40">
+                  {navData.closestPokecenter.isAlreadyInside ? '✅ À l\'intérieur' : `Distance : ~${navData.closestPokecenter.directDistance} pas`}
                 </span>
               </div>
               <p className="text-[10px] text-emerald-400/90 font-normal leading-snug">
-                {navData.closestPokecenter.nextStepDescription}
+                {healProgress ? healProgress.stepMessage : navData.closestPokecenter.nextStepDescription}
               </p>
             </div>
           ) : (
-            <span className="text-emerald-400/70 text-[10px] italic mt-0.5">Calcul de l'itinéraire vers le Centre Pokémon...</span>
+            <span className="text-emerald-400/70 text-[10px] italic">Calcul de l'itinéraire vers le Centre Pokémon...</span>
           )}
+
+          {/* Module 2 Trigger Button & Live Status */}
+          <div className="flex items-center justify-between gap-2 pt-1 border-t border-emerald-900/40">
+            <button
+              onClick={handleTriggerAutoHeal}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded font-bold text-xs transition-all cursor-pointer shadow ${
+                isHealRunning
+                  ? 'bg-rose-950/80 hover:bg-rose-900/90 text-rose-300 border border-rose-600/50 animate-pulse'
+                  : 'bg-emerald-900/60 hover:bg-emerald-800/80 text-emerald-200 border border-emerald-600/50'
+              }`}
+            >
+              {isHealRunning ? (
+                <>
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                  <span>Arrêter l'Auto-Soin</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Tester Module 2 : Auto-Soin Complet (Aller / Soin / Retour)</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Hex Dumps (Navigation D350-D37F & Warps D3A0-D3DF) */}
