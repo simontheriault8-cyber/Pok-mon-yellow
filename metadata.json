@@ -1,0 +1,8 @@
+{
+  "name": "Remix Game Boy Color Emulator",
+  "description": "Émulateur Game Boy Color complet avec sauvegarde en temps réel, avance rapide 2x/4x, commandes tactiles personnalisables et bibliothèque de ROMs locale.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

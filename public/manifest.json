@@ -1,0 +1,24 @@
+{
+  "name": "Game Boy Color",
+  "short_name": "GBC Emulator",
+  "description": "Émulateur Game Boy Color complet avec sauvegarde en temps réel, avance rapide et commandes tactiles.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#090a0f",
+  "theme_color": "#090a0f",
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon.png",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}
