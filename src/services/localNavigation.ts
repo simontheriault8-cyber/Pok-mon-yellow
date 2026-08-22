@@ -4,10 +4,11 @@
 // 2. Door/Warp interactions
 // 3. Nurse Joy dialogue automation (heal party, clear text)
 // 4. Return from Pokémon Center to the training grounds
+// 5. Complete diagnostic logging and execution timer
 
 import { GameBoy } from '../emulator/gameboy';
 import { POKEMON_YELLOW_RAM, resolveAddr } from './pokemonYellowRam';
-import { readNavigationState, PokecenterLocation } from './worldNavigation';
+import { readNavigationState, POKEMON_YELLOW_MAPS } from './worldNavigation';
 
 export type AutoHealStatus =
   | 'idle'
@@ -29,11 +30,23 @@ export interface AutoHealProgress {
   distance: number;
 }
 
+export interface NavLogEntry {
+  id: string;
+  time: string;
+  type: 'info' | 'nav' | 'step' | 'door' | 'nurse' | 'heal' | 'return' | 'error' | 'stop';
+  message: string;
+  coords?: { x: number; y: number };
+  mapId?: number;
+}
+
 export class LocalNavigationEngine {
   private emulator: GameBoy | null = null;
   private isRunning: boolean = false;
+  private startTime: number | null = null;
   private currentStatus: AutoHealStatus = 'idle';
+  private logs: NavLogEntry[] = [];
   private onProgressCallback?: (progress: AutoHealProgress) => void;
+  public onLogsUpdate?: (logs: NavLogEntry[]) => void;
   private originTrainingMapId: number | null = null;
   private originTrainingCoords: { x: number; y: number } | null = null;
 
@@ -55,10 +68,62 @@ export class LocalNavigationEngine {
     return this.currentStatus;
   }
 
+  public getStartTime(): number | null {
+    return this.startTime;
+  }
+
+  public getLogs(): NavLogEntry[] {
+    return [...this.logs];
+  }
+
+  public clearLogs(): void {
+    this.logs = [];
+    this.addLog('info', 'Journal de navigation réinitialisé.');
+  }
+
+  public addLog(
+    type: NavLogEntry['type'],
+    message: string,
+    coords?: { x: number; y: number },
+    mapId?: number
+  ): void {
+    let timeStr = '';
+    if (this.startTime) {
+      const elapsed = Date.now() - this.startTime;
+      const mins = Math.floor(elapsed / 60000);
+      const secs = Math.floor((elapsed % 60000) / 1000);
+      const ms = Math.floor((elapsed % 1000) / 100);
+      timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms}`;
+    } else {
+      const now = new Date();
+      timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+    }
+
+    const entry: NavLogEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      time: timeStr,
+      type,
+      message,
+      coords,
+      mapId,
+    };
+
+    this.logs.unshift(entry);
+    if (this.logs.length > 150) {
+      this.logs.pop();
+    }
+
+    if (this.onLogsUpdate) {
+      this.onLogsUpdate([...this.logs]);
+    }
+  }
+
   public stop(): void {
+    if (!this.isRunning) return;
     this.isRunning = false;
     this.currentStatus = 'idle';
     this.releaseAllKeys();
+    this.addLog('stop', '⛔ Module 2 arrêté par l\'utilisateur.');
     this.notifyProgress('Navigation arrêtée par l\'utilisateur.', null, null, 0);
   }
 
@@ -95,31 +160,47 @@ export class LocalNavigationEngine {
     if (!mmu) return false;
 
     this.isRunning = true;
+    this.startTime = Date.now();
+    this.addLog('info', '🚀 Lancement du Module 2 : Séquence d\'Auto-Soin complète');
 
     try {
       // Step 1: Read current position & determine closest Pokémon Center
       let nav = readNavigationState(mmu);
       if (!nav || !nav.closestPokecenter) {
         this.currentStatus = 'error';
+        this.addLog('error', '❌ Aucun Centre Pokémon détecté ou accessible depuis cette position.');
         this.notifyProgress('Aucun Centre Pokémon détecté ou accessible.', null, null, 0);
         return false;
       }
 
       // Record starting coordinates to come back after healing
-      if (this.originTrainingCoords === null) {
-        this.originTrainingMapId = nav.currentMapId;
-        this.originTrainingCoords = { x: nav.playerX, y: nav.playerY };
-      }
+      this.originTrainingMapId = nav.currentMapId;
+      this.originTrainingCoords = { x: nav.playerX, y: nav.playerY };
+      const curMapName = POKEMON_YELLOW_MAPS[nav.currentMapId] || `Map 0x${nav.currentMapId.toString(16)}`;
+
+      this.addLog(
+        'nav',
+        `📍 Point de départ enregistré : ${curMapName} (${nav.playerX}, ${nav.playerY})`,
+        { x: nav.playerX, y: nav.playerY },
+        nav.currentMapId
+      );
 
       const targetCenter = nav.closestPokecenter.targetPokecenter;
+      this.addLog(
+        'info',
+        `🎯 Cible : ${targetCenter.name} (Porte en (${targetCenter.doorCoords.x}, ${targetCenter.doorCoords.y}) | Distance : ~${nav.closestPokecenter.directDistance} pas)`
+      );
 
       // Step 2: If outside, move towards the Pokémon Center door
       if (!nav.closestPokecenter.isAlreadyInside) {
         this.currentStatus = 'navigating_to_pokecenter';
-        
+
         // If in an adjacent map, step towards the connecting zone first
         while (this.isRunning && nav.currentMapId !== targetCenter.outdoorMapId) {
           const nextTargetMap = nav.closestPokecenter.mapRoute[1];
+          const nextMapName = POKEMON_YELLOW_MAPS[nextTargetMap] || `Map 0x${nextTargetMap.toString(16)}`;
+          this.addLog('nav', `🗺️ Transition de zone en cours vers ${nextMapName}...`);
+
           this.notifyProgress(
             `Voyage vers ${targetCenter.name} (Changement de carte en cours)...`,
             null,
@@ -127,7 +208,6 @@ export class LocalNavigationEngine {
             nav.closestPokecenter.directDistance
           );
 
-          // Walk towards the connection (e.g., if on Route 22 moving East to Viridian, walk right)
           await this.navigateAcrossAdjacentMap(mmu, nextTargetMap);
           await this.wait(200);
           nav = readNavigationState(mmu)!;
@@ -136,6 +216,13 @@ export class LocalNavigationEngine {
         if (!this.isRunning) return false;
 
         // Now in the same outdoor map (e.g. Viridian City)
+        this.addLog(
+          'step',
+          `🚶 Trajet vers la porte de ${targetCenter.name} (${targetCenter.doorCoords.x}, ${targetCenter.doorCoords.y})...`,
+          { x: nav.playerX, y: nav.playerY },
+          nav.currentMapId
+        );
+
         this.notifyProgress(
           `Déplacement vers la porte du ${targetCenter.name} (${targetCenter.doorCoords.x}, ${targetCenter.doorCoords.y})...`,
           targetCenter.doorCoords,
@@ -149,10 +236,15 @@ export class LocalNavigationEngine {
           targetCenter.doorCoords.y + 1 // Position directly in front of the door
         );
 
-        if (!reachedDoor || !this.isRunning) return false;
+        if (!reachedDoor || !this.isRunning) {
+          if (!this.isRunning) return false;
+          this.addLog('error', '⚠️ Impossible d\'atteindre la porte (obstacle bloquant).');
+          return false;
+        }
 
         // Step 3: Step UP into the door
         this.currentStatus = 'entering_door';
+        this.addLog('door', `🚪 Franchissement de la porte du ${targetCenter.name}...`);
         this.notifyProgress(`Entrée dans le ${targetCenter.name}...`, targetCenter.doorCoords, null, 0);
         await this.stepDirection(mmu, 'up');
         await this.wait(600); // Wait for map transition warp
@@ -167,39 +259,55 @@ export class LocalNavigationEngine {
         nav = readNavigationState(mmu)!;
       }
 
+      this.addLog('nav', `🏥 Arrivée à l'intérieur du ${targetCenter.name} (Map 0x${nav.currentMapId.toString(16)})`);
       this.currentStatus = 'approaching_nurse';
       this.notifyProgress('Approche du comptoir de l\'Infirmière Joëlle (3, 3)...', { x: 3, y: 3 }, { x: nav.playerX, y: nav.playerY }, 0);
 
       // Walk to Nurse interaction position (X=3, Y=3)
+      this.addLog('step', '🚶 Déplacement vers le guichet de l\'Infirmière Joëlle (3, 3)...');
       await this.walkToCoordinates(mmu, 3, 3);
       if (!this.isRunning) return false;
 
       // Face UP towards the Nurse
       nav = readNavigationState(mmu)!;
       if (nav.rawFacing !== 0x04) {
+        this.addLog('nav', '👀 Orientation vers le haut (face à Joëlle)...');
         await this.tapKey('up', 80);
         await this.wait(150);
       }
 
       // Step 5: Nurse Joy Dialogue Automation
       this.currentStatus = 'talking_to_nurse';
+      this.addLog('nurse', '💬 Début du dialogue avec l\'Infirmière Joëlle [A]...');
       this.notifyProgress('🩺 Soin de l\'équipe Pokémon auprès de Joëlle...', { x: 3, y: 2 }, { x: 3, y: 3 }, 0);
       await this.interactWithNurse(mmu);
       if (!this.isRunning) return false;
 
+      this.addLog('heal', '✨ Équipe Pokémon soignée à 100% de PV !');
+
       // Step 6: Exit the Pokémon Center
       this.currentStatus = 'exiting_pokecenter';
+      this.addLog('step', '🚶 Déplacement vers la sortie du Centre Pokémon (3, 7)...');
       this.notifyProgress('Sortie du Centre Pokémon...', { x: 3, y: 7 }, null, 0);
       await this.walkToCoordinates(mmu, 3, 7);
       if (!this.isRunning) return false;
 
       // Step Down on mat to warp out
+      this.addLog('door', '🚪 Sortie du Centre Pokémon...');
       await this.stepDirection(mmu, 'down');
       await this.wait(600); // Warp out to city
 
       // Step 7: Return to original training spot if requested
       if (returnToOrigin && this.originTrainingCoords && this.originTrainingMapId !== null) {
         this.currentStatus = 'returning_to_training';
+        const originMapName = POKEMON_YELLOW_MAPS[this.originTrainingMapId] || `Map 0x${this.originTrainingMapId.toString(16)}`;
+        this.addLog(
+          'return',
+          `🔄 Trajet retour vers le spot d'entraînement : ${originMapName} (${this.originTrainingCoords.x}, ${this.originTrainingCoords.y})...`,
+          this.originTrainingCoords,
+          this.originTrainingMapId
+        );
+
         this.notifyProgress(
           `Retour vers la zone d'entraînement initiale (${this.originTrainingCoords.x}, ${this.originTrainingCoords.y})...`,
           this.originTrainingCoords,
@@ -217,11 +325,14 @@ export class LocalNavigationEngine {
       }
 
       this.currentStatus = 'completed';
+      const totalElapsed = this.startTime ? ((Date.now() - this.startTime) / 1000).toFixed(1) : '0';
+      this.addLog('heal', `🎉 Module 2 terminé avec succès en ${totalElapsed}s ! Prêt pour le combat.`);
       this.notifyProgress('✨ Soin terminé avec succès ! Équipe à 100% de PV.', null, null, 0);
       return true;
     } catch (e) {
       console.error('Erreur LocalNavigationEngine:', e);
       this.currentStatus = 'error';
+      this.addLog('error', `❌ Erreur critique navigation : ${e instanceof Error ? e.message : String(e)}`);
       this.notifyProgress('Erreur pendant la navigation.', null, null, 0);
       return false;
     } finally {
@@ -246,6 +357,7 @@ export class LocalNavigationEngine {
 
     let attempts = 0;
     let healed = false;
+    this.addLog('nurse', '🎵 Attente de la mélodie de soin des Pokéballs...');
 
     // Loop through dialogue until joyful heal is completed and control returned
     while (attempts < 60 && this.isRunning) {
@@ -261,6 +373,7 @@ export class LocalNavigationEngine {
         await this.tapKey('b', 60);
         await this.wait(100);
         healed = true;
+        this.addLog('nurse', '🩺 Dialogue avec Joëlle clôturé avec succès.');
         break;
       }
 
@@ -293,6 +406,7 @@ export class LocalNavigationEngine {
       if (currentX === lastX && currentY === lastY) {
         stuckAttempts++;
         if (stuckAttempts >= 3) {
+          this.addLog('step', `⚠️ Obstacle détecté en (${currentX}, ${currentY}), contournement...`);
           // Obstacle avoidance: try alternate axis detour
           await this.avoidObstacle(mmu, currentX, currentY, targetX, targetY);
           stuckAttempts = 0;
@@ -341,19 +455,21 @@ export class LocalNavigationEngine {
 
     // Route 22 (0x21) -> Jadielle (0x01) connects at the East border (walk Right)
     if (curMap === 0x21 && targetMapId === 0x01) {
-      // Walk towards the east edge
+      this.addLog('nav', '🗺️ Traversée de la Route 22 vers Jadielle (Bord Est)...');
       await this.walkToCoordinates(mmu, 39, curY);
       await this.stepDirection(mmu, 'right');
       await this.stepDirection(mmu, 'right');
     }
     // Route 1 (0x0C) -> Jadielle (0x01) connects at the North border (walk Up)
     else if (curMap === 0x0C && targetMapId === 0x01) {
+      this.addLog('nav', '🗺️ Traversée de la Route 1 vers Jadielle (Bord Nord)...');
       await this.walkToCoordinates(mmu, curX, 0);
       await this.stepDirection(mmu, 'up');
       await this.stepDirection(mmu, 'up');
     }
     // Jadielle (0x01) -> Route 22 (0x21) connects at the West border (walk Left)
     else if (curMap === 0x01 && targetMapId === 0x21) {
+      this.addLog('nav', '🗺️ Traversée de Jadielle vers Route 22 (Bord Ouest)...');
       await this.walkToCoordinates(mmu, 0, 9);
       await this.stepDirection(mmu, 'left');
       await this.stepDirection(mmu, 'left');
@@ -367,14 +483,11 @@ export class LocalNavigationEngine {
     targetX: number,
     targetY: number
   ): Promise<void> {
-    // Try moving perpendicularly to bypass the obstacle
     if (targetX !== currentX) {
-      // Trying to move horizontally, blocked -> move UP or DOWN
       await this.stepDirection(mmu, 'up');
       await this.wait(100);
       await this.stepDirection(mmu, 'up');
     } else {
-      // Trying to move vertically, blocked -> move LEFT or RIGHT
       await this.stepDirection(mmu, 'right');
       await this.wait(100);
       await this.stepDirection(mmu, 'right');

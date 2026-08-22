@@ -2,8 +2,11 @@ import { useEffect, useState, useRef } from 'react';
 import { GameBoy } from '../emulator/gameboy';
 import { POKEMON_YELLOW_RAM, resolveAddr } from '../services/pokemonYellowRam';
 import { readNavigationState, NavigationRoute, POKEMON_YELLOW_MAPS, WarpInfo } from '../services/worldNavigation';
-import { LocalNavigationEngine, AutoHealProgress } from '../services/localNavigation';
-import { Cpu, Sparkles, Compass, MapPin, DoorOpen, ShieldAlert, HeartPulse, Play, Square, RefreshCw } from 'lucide-react';
+import { LocalNavigationEngine, AutoHealProgress, NavLogEntry } from '../services/localNavigation';
+import { 
+  Cpu, Sparkles, Compass, MapPin, DoorOpen, ShieldAlert, HeartPulse, 
+  Play, Square, RefreshCw, Terminal, Copy, Check, Trash2, ChevronDown, ChevronUp, Clock 
+} from 'lucide-react';
 import { TrainerBotMode } from '../services/simpleTrainerBot';
 
 interface RamViewerProps {
@@ -15,9 +18,13 @@ interface RamViewerProps {
 
 export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: RamViewerProps) {
   const [elapsedMs, setElapsedMs] = useState<number>(0);
+  const [navElapsedMs, setNavElapsedMs] = useState<number>(0);
   const navEngineRef = useRef<LocalNavigationEngine>(new LocalNavigationEngine());
   const [healProgress, setHealProgress] = useState<AutoHealProgress | null>(null);
   const [isHealRunning, setIsHealRunning] = useState<boolean>(false);
+  const [navLogs, setNavLogs] = useState<NavLogEntry[]>([]);
+  const [showLogs, setShowLogs] = useState<boolean>(true);
+  const [copied, setCopied] = useState<boolean>(false);
 
   useEffect(() => {
     navEngineRef.current.setEmulator(emulator);
@@ -29,6 +36,10 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
         setIsHealRunning(true);
       }
     });
+
+    navEngineRef.current.onLogsUpdate = (logs) => {
+      setNavLogs(logs);
+    };
   }, [emulator]);
 
   const handleTriggerAutoHeal = async () => {
@@ -41,6 +52,42 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     }
   };
 
+  const handleCopyLogs = async () => {
+    if (navLogs.length === 0) return;
+    const formatted = [
+      '========================================',
+      '🩺 JOURNAL DE NAVIGATION & AUTO-SOIN (MODULE 2)',
+      `Date : ${new Date().toLocaleString()}`,
+      `Statut : ${isHealRunning ? 'EN COURS' : healProgress?.status || 'PRÊT'}`,
+      '========================================\n',
+      ...navLogs.map((l) => `[${l.time}] [${l.type.toUpperCase()}] ${l.message}`)
+    ].join('\n');
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(formatted);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = formatted;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      console.error('Erreur copie presse-papier:', e);
+    }
+  };
+
+  const handleClearLogs = () => {
+    navEngineRef.current.clearLogs();
+  };
+
+  // Bot timer
   useEffect(() => {
     let animationFrameId: number;
 
@@ -62,12 +109,32 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     };
   }, [isBotRunning, botStartTime]);
 
+  // Nav / Module 2 Timer
+  useEffect(() => {
+    let animationFrameId: number;
+
+    const updateNavTimer = () => {
+      const start = navEngineRef.current.getStartTime();
+      if (isHealRunning && start) {
+        setNavElapsedMs(Date.now() - start);
+        animationFrameId = requestAnimationFrame(updateNavTimer);
+      }
+    };
+
+    if (isHealRunning) {
+      animationFrameId = requestAnimationFrame(updateNavTimer);
+    }
+
+    return () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    };
+  }, [isHealRunning]);
+
   const formatTimer = (ms: number) => {
-    if (ms === 0 && !isBotRunning) return null;
     const mins = Math.floor(ms / 60000);
     const secs = Math.floor((ms % 60000) / 1000);
-    const msecs = ms % 1000;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${msecs.toString().padStart(3, '0')}`;
+    const msecs = Math.floor((ms % 1000) / 100);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${msecs}`;
   };
 
   const [navData, setNavData] = useState<{
@@ -93,10 +160,10 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     dumpD3A0: number[];
   }>({
     currentMapId: 0,
-    mapName: 'Initialisation...',
+    mapName: 'Chargement...',
     playerX: 0,
     playerY: 0,
-    facing: 'Bas ⬇️',
+    facing: 'Inconnu',
     rawFacing: 0,
     tileset: 0,
     standingTile: 0,
@@ -115,37 +182,31 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
   });
 
   useEffect(() => {
-    if (!emulator) return;
-    
+    if (!emulator || !emulator.cart) return;
+
+    let frameId: number;
     let active = true;
-    let frameId = 0;
 
     const readRam = () => {
       if (!active) return;
-      
       const mmu = emulator.mmu;
-      if (!mmu) {
-        frameId = requestAnimationFrame(readRam);
-        return;
-      }
+      if (!mmu) return;
 
-      // Check if French by Title (0x134)
-      let titleStr = '';
-      for (let i = 0x134; i <= 0x142; i++) {
-        titleStr += String.fromCharCode(mmu.read(i));
-      }
-      const isFrench = titleStr.includes('JAUNE');
+      const isFrench = emulator.cart?.title.toUpperCase().includes('FRA') || 
+                       emulator.cart?.title.toUpperCase().includes('FRENCH') || 
+                       emulator.cart?.rom[0x0147] === 0x46 || false;
 
+      // Extract Navigation State
       const nav = readNavigationState(mmu);
-      const pCountAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_COUNT_EN, mmu);
-      const partyCount = mmu.read(pCountAddr);
 
-      // Check alive party count
+      // Party health analysis
+      const partyCountAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_COUNT_EN, mmu);
+      const partyCount = mmu.read(partyCountAddr);
+      const validCount = partyCount > 0 && partyCount <= 6 ? partyCount : 0;
       let aliveCount = 0;
-      const validCount = Math.min(Math.max(partyCount, 0), 6);
-      const baseHpAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_HP_EN, mmu);
+
       for (let i = 0; i < validCount; i++) {
-        const hpAddr = baseHpAddr + i * POKEMON_YELLOW_RAM.PARTY_STRUCT_SIZE;
+        const hpAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_HP_EN + i * POKEMON_YELLOW_RAM.PARTY_STRUCT_SIZE, mmu);
         const curHp = (mmu.read(hpAddr) << 8) | mmu.read(hpAddr + 1);
         if (curHp > 0) aliveCount++;
       }
@@ -205,6 +266,27 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
 
   const hexFormat = (num: number, padding: number = 2) => '0x' + num.toString(16).toUpperCase().padStart(padding, '0');
 
+  const getLogBadge = (type: NavLogEntry['type']) => {
+    switch (type) {
+      case 'nav':
+        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">CARTE</span>;
+      case 'door':
+        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">PORTE</span>;
+      case 'nurse':
+        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-pink-500/20 text-pink-300 border border-pink-500/30">JOËLLE</span>;
+      case 'heal':
+        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">SOIN</span>;
+      case 'return':
+        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">RETOUR</span>;
+      case 'error':
+        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">ERREUR</span>;
+      case 'stop':
+        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-zinc-500/20 text-zinc-300 border border-zinc-500/30">ARRÊT</span>;
+      default:
+        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">INFO</span>;
+    }
+  };
+
   return (
     <div className="w-full flex-1 min-h-0 bg-[#0a0a0c] border-t border-zinc-800/50 overflow-hidden font-mono text-[10px] sm:text-[11px] text-emerald-500 shadow-inner p-2 md:p-3 relative">
       <div className="absolute inset-0 pointer-events-none opacity-[0.02]" 
@@ -217,11 +299,23 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
         <Compass className="w-4 h-4 text-emerald-400 animate-pulse" />
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <h3 className="uppercase tracking-widest font-bold text-emerald-400 text-xs">Navigation & Moniteur RAM Direct</h3>
-          {isBotRunning && botStartTime && (
-            <span className="font-mono text-emerald-300 font-bold bg-emerald-950/50 px-2 py-0.5 rounded text-[11px] border border-emerald-500/30">
-              {formatTimer(elapsedMs)}
+          
+          {/* Module 2 Auto-Heal Live Timer */}
+          {isHealRunning && (
+            <span className="font-mono text-emerald-300 font-bold bg-emerald-950/70 px-2 py-0.5 rounded text-[11px] border border-emerald-500/50 flex items-center gap-1 animate-pulse">
+              <Clock className="w-3 h-3 text-emerald-400" />
+              <span>Auto-Soin : {formatTimer(navElapsedMs)}</span>
             </span>
           )}
+
+          {/* Combat Bot Live Timer */}
+          {isBotRunning && botStartTime && (
+            <span className="font-mono text-amber-300 font-bold bg-amber-950/50 px-2 py-0.5 rounded text-[11px] border border-amber-500/30 flex items-center gap-1">
+              <Clock className="w-3 h-3 text-amber-400" />
+              <span>Bot : {formatTimer(elapsedMs)}</span>
+            </span>
+          )}
+
           {isBotRunning && botMode && (
             <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-amber-300 bg-amber-950/40 border border-amber-500/30 px-1.5 py-0.5 rounded">
               <Sparkles className="w-2.5 h-2.5" />
@@ -344,9 +438,17 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
               <HeartPulse className="w-3.5 h-3.5 text-emerald-400" />
               <span>Module 1 & 2 : Navigation Locale & Auto-Soin</span>
             </span>
-            <span className="font-bold text-emerald-300 bg-emerald-900/60 px-1.5 py-0.5 rounded border border-emerald-700/40">
-              Équipe : {navData.aliveCount}/{navData.partyCount} en vie
-            </span>
+            <div className="flex items-center gap-2">
+              {isHealRunning && (
+                <span className="font-mono text-[10px] text-emerald-300 bg-emerald-900/80 px-2 py-0.5 rounded border border-emerald-500/40 flex items-center gap-1 animate-pulse">
+                  <Clock className="w-3 h-3 text-emerald-400" />
+                  {formatTimer(navElapsedMs)}
+                </span>
+              )}
+              <span className="font-bold text-emerald-300 bg-emerald-900/60 px-1.5 py-0.5 rounded border border-emerald-700/40">
+                Équipe : {navData.aliveCount}/{navData.partyCount} en vie
+              </span>
+            </div>
           </div>
 
           {navData.closestPokecenter ? (
@@ -365,7 +467,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
             <span className="text-emerald-400/70 text-[10px] italic">Calcul de l'itinéraire vers le Centre Pokémon...</span>
           )}
 
-          {/* Module 2 Trigger Button & Live Status */}
+          {/* Module 2 Trigger Button */}
           <div className="flex items-center justify-between gap-2 pt-1 border-t border-emerald-900/40">
             <button
               onClick={handleTriggerAutoHeal}
@@ -378,7 +480,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
               {isHealRunning ? (
                 <>
                   <Square className="w-3.5 h-3.5 fill-current" />
-                  <span>Arrêter l'Auto-Soin</span>
+                  <span>Arrêter l'Auto-Soin ({formatTimer(navElapsedMs)})</span>
                 </>
               ) : (
                 <>
@@ -387,6 +489,70 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
                 </>
               )}
             </button>
+          </div>
+
+          {/* Module 2 Live Decision & Action Log Stream */}
+          <div className="flex flex-col gap-1.5 bg-black/60 p-2 rounded-lg border border-emerald-900/60 mt-1">
+            <div className="flex items-center justify-between text-[10px] pb-1 border-b border-emerald-900/50">
+              <div className="flex items-center gap-1.5 text-emerald-300 font-bold">
+                <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Journal & Logs de Navigation (Module 2)</span>
+                <span className="text-[9px] bg-emerald-950 px-1.5 py-0.2 rounded border border-emerald-800 text-emerald-400">
+                  {navLogs.length} logs
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleCopyLogs}
+                  disabled={navLogs.length === 0}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/40 text-[9px] cursor-pointer disabled:opacity-40"
+                  title="Copier les logs de navigation"
+                >
+                  {copied ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                  <span>{copied ? 'Copié !' : 'Copier'}</span>
+                </button>
+                <button
+                  onClick={handleClearLogs}
+                  disabled={navLogs.length === 0}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/40 text-[9px] cursor-pointer disabled:opacity-40"
+                  title="Effacer le journal"
+                >
+                  <Trash2 className="w-2.5 h-2.5" />
+                </button>
+                <button
+                  onClick={() => setShowLogs(!showLogs)}
+                  className="p-0.5 rounded hover:bg-emerald-900/40 text-emerald-400 cursor-pointer"
+                  title={showLogs ? 'Réduire les logs' : 'Développer les logs'}
+                >
+                  {showLogs ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            {showLogs && (
+              <div className="flex flex-col gap-1 max-h-36 overflow-y-auto pr-1 text-[9px] scrollbar-thin">
+                {navLogs.length > 0 ? (
+                  navLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className="flex items-start gap-1.5 py-0.5 px-1 rounded bg-black/40 border border-emerald-900/30 hover:border-emerald-700/40"
+                    >
+                      <span className="text-emerald-600 font-mono text-[8px] whitespace-nowrap pt-0.5">
+                        {log.time}
+                      </span>
+                      {getLogBadge(log.type)}
+                      <span className="text-emerald-200 leading-tight flex-1 break-words">
+                        {log.message}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-emerald-600 italic py-2 text-center text-[9px]">
+                    {isHealRunning ? 'Enregistrement des actions...' : 'Prêt. Cliquez sur Tester Module 2 pour lancer la séquence.'}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -406,4 +572,3 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     </div>
   );
 }
-
