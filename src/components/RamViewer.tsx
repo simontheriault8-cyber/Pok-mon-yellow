@@ -184,81 +184,77 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
   useEffect(() => {
     if (!emulator || !emulator.cart) return;
 
-    let frameId: number;
-    let active = true;
-
     const readRam = () => {
-      if (!active) return;
-      const mmu = emulator.mmu;
-      if (!mmu) return;
+      try {
+        const mmu = emulator.mmu;
+        if (!mmu) return;
 
-      const isFrench = emulator.cart?.title.toUpperCase().includes('FRA') || 
-                       emulator.cart?.title.toUpperCase().includes('FRENCH') || 
-                       emulator.cart?.rom[0x0147] === 0x46 || false;
+        const isFrench = emulator.cart?.title.toUpperCase().includes('FRA') || 
+                         emulator.cart?.title.toUpperCase().includes('FRENCH') || 
+                         emulator.cart?.rom[0x0147] === 0x46 || false;
 
-      // Extract Navigation State
-      const nav = readNavigationState(mmu);
+        // Extract Navigation State
+        const nav = readNavigationState(mmu);
 
-      // Party health analysis
-      const partyCountAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_COUNT_EN, mmu);
-      const partyCount = mmu.read(partyCountAddr);
-      const validCount = partyCount > 0 && partyCount <= 6 ? partyCount : 0;
-      let aliveCount = 0;
+        // Party health analysis
+        const partyCountAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_COUNT_EN, mmu);
+        const partyCount = mmu.read(partyCountAddr);
+        const validCount = partyCount > 0 && partyCount <= 6 ? partyCount : 0;
+        let aliveCount = 0;
 
-      for (let i = 0; i < validCount; i++) {
-        const hpAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_HP_EN + i * POKEMON_YELLOW_RAM.PARTY_STRUCT_SIZE, mmu);
-        const curHp = (mmu.read(hpAddr) << 8) | mmu.read(hpAddr + 1);
-        if (curHp > 0) aliveCount++;
+        for (let i = 0; i < validCount; i++) {
+          const hpAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_HP_EN + i * POKEMON_YELLOW_RAM.PARTY_STRUCT_SIZE, mmu);
+          const curHp = (mmu.read(hpAddr) << 8) | mmu.read(hpAddr + 1);
+          if (curHp > 0) aliveCount++;
+        }
+
+        // Extract Navigation D350-D37F dump (Maps, Coords, Dimensions)
+        const dumpD350: number[] = [];
+        for (let i = 0xD350; i <= 0xD37F; i++) {
+          dumpD350.push(mmu.read(i));
+        }
+
+        // Extract Warps D3A0-D3DF dump (D3AE = WarpCount, D3AF = Warp entries)
+        const dumpD3A0: number[] = [];
+        for (let i = 0xD3A0; i <= 0xD3DF; i++) {
+          dumpD3A0.push(mmu.read(i));
+        }
+
+        if (nav) {
+          setNavData({
+            currentMapId: nav.currentMapId,
+            mapName: nav.mapName,
+            playerX: nav.playerX,
+            playerY: nav.playerY,
+            facing: nav.facing,
+            rawFacing: nav.rawFacing,
+            tileset: nav.tileset,
+            standingTile: nav.standingTile,
+            warpCount: nav.warpCount,
+            mapWidth: nav.mapWidth,
+            mapHeight: nav.mapHeight,
+            warps: nav.warps,
+            joyIgnore: nav.joyIgnore,
+            battleType: nav.battleType,
+            isFrench,
+            partyCount: validCount,
+            aliveCount,
+            closestPokecenter: nav.closestPokecenter,
+            dumpD350,
+            dumpD3A0,
+          });
+        }
+      } catch (err) {
+        console.error('Erreur lecture RAM viewer:', err);
       }
-
-      // Extract Navigation D350-D37F dump (Maps, Coords, Dimensions)
-      const dumpD350: number[] = [];
-      for (let i = 0xD350; i <= 0xD37F; i++) {
-        dumpD350.push(mmu.read(i));
-      }
-
-      // Extract Warps D3A0-D3DF dump (D3AE = WarpCount, D3AF = Warp entries)
-      const dumpD3A0: number[] = [];
-      for (let i = 0xD3A0; i <= 0xD3DF; i++) {
-        dumpD3A0.push(mmu.read(i));
-      }
-
-      if (nav) {
-        setNavData({
-          currentMapId: nav.currentMapId,
-          mapName: nav.mapName,
-          playerX: nav.playerX,
-          playerY: nav.playerY,
-          facing: nav.facing,
-          rawFacing: nav.rawFacing,
-          tileset: nav.tileset,
-          standingTile: nav.standingTile,
-          warpCount: nav.warpCount,
-          mapWidth: nav.mapWidth,
-          mapHeight: nav.mapHeight,
-          warps: nav.warps,
-          joyIgnore: nav.joyIgnore,
-          battleType: nav.battleType,
-          isFrench,
-          partyCount: validCount,
-          aliveCount,
-          closestPokecenter: nav.closestPokecenter,
-          dumpD350,
-          dumpD3A0,
-        });
-      }
-
-      // Poll at 10 FPS
-      setTimeout(() => {
-        if (active) frameId = requestAnimationFrame(readRam);
-      }, 100);
     };
 
-    frameId = requestAnimationFrame(readRam);
+    // Immediate first read
+    readRam();
+    const interval = setInterval(readRam, 80);
 
     return () => {
-      active = false;
-      cancelAnimationFrame(frameId);
+      clearInterval(interval);
     };
   }, [emulator]);
 

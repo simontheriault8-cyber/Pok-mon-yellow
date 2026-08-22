@@ -1,10 +1,11 @@
 // Module 2: Local Map Navigation & Auto-Heal Pathfinding Engine
 // Handles:
-// 1. Precise local movement (step-by-step target coordinates)
-// 2. Door/Warp interactions
-// 3. Nurse Joy dialogue automation (heal party, clear text)
-// 4. Return from Pokémon Center to the training grounds
-// 5. Complete diagnostic logging and execution timer
+// 1. Precise local movement with intelligent waypoints (corridors, fences, ledges)
+// 2. Map-to-map transitions (Route 1 <-> Viridian <-> Route 22 <-> Pokécenter)
+// 3. Door/Warp interactions
+// 4. Nurse Joy dialogue automation (heal party, clear text)
+// 5. Safe return from Pokémon Center to the origin training grounds
+// 6. Complete diagnostic logging and execution timer
 
 import { GameBoy } from '../emulator/gameboy';
 import { POKEMON_YELLOW_RAM, resolveAddr } from './pokemonYellowRam';
@@ -37,6 +38,12 @@ export interface NavLogEntry {
   message: string;
   coords?: { x: number; y: number };
   mapId?: number;
+}
+
+interface Waypoint {
+  x: number;
+  y: number;
+  description?: string;
 }
 
 export class LocalNavigationEngine {
@@ -147,12 +154,12 @@ export class LocalNavigationEngine {
   /**
    * Execute full automated Auto-Heal sequence:
    * 1. Save origin coordinates for the return trip
-   * 2. Travel to the Pokémon Center door
+   * 2. Travel to the Pokémon Center door (smart waypoint corridors)
    * 3. Enter the door (walk Up into building)
    * 4. Walk to Nurse Joy counter at (3, 3) facing Up
    * 5. Trigger dialogue with [A], wait for heal jingle, clear dialogue with [B]
    * 6. Exit the Pokémon Center (walk down to (3, 7))
-   * 7. (Optional) Return to origin training spot
+   * 7. Return to origin training spot
    */
   public async executeAutoHealSequence(returnToOrigin: boolean = true): Promise<boolean> {
     if (!this.emulator || this.isRunning) return false;
@@ -188,74 +195,49 @@ export class LocalNavigationEngine {
       const targetCenter = nav.closestPokecenter.targetPokecenter;
       this.addLog(
         'info',
-        `🎯 Cible : ${targetCenter.name} (Porte en (${targetCenter.doorCoords.x}, ${targetCenter.doorCoords.y}) | Distance : ~${nav.closestPokecenter.directDistance} pas)`
+        `🎯 Cible : ${targetCenter.name} (Porte en (${targetCenter.doorCoords.x}, ${targetCenter.doorCoords.y}))`
       );
 
-      // Step 2: If outside, move towards the Pokémon Center door
+      // Step 2: If outside, navigate to Pokémon Center door using waypoint corridors
       if (!nav.closestPokecenter.isAlreadyInside) {
         this.currentStatus = 'navigating_to_pokecenter';
 
-        // If in an adjacent map, step towards the connecting zone first
-        while (this.isRunning && nav.currentMapId !== targetCenter.outdoorMapId) {
-          const nextTargetMap = nav.closestPokecenter.mapRoute[1];
-          const nextMapName = POKEMON_YELLOW_MAPS[nextTargetMap] || `Map 0x${nextTargetMap.toString(16)}`;
-          this.addLog('nav', `🗺️ Transition de zone en cours vers ${nextMapName}...`);
-
-          this.notifyProgress(
-            `Voyage vers ${targetCenter.name} (Changement de carte en cours)...`,
-            null,
-            { x: nav.playerX, y: nav.playerY },
-            nav.closestPokecenter.directDistance
-          );
-
-          await this.navigateAcrossAdjacentMap(mmu, nextTargetMap);
-          await this.wait(200);
+        // Phase 2a: If on Route 1 (0x0C), navigate North towards Viridian City (0x01)
+        if (nav.currentMapId === 0x0C) {
+          this.addLog('nav', '🗺️ Navigation sur Route 1 vers le passage Nord (Jadielle)...');
+          await this.navigateRoute1ToViridian(mmu);
+          if (!this.isRunning) return false;
+          nav = readNavigationState(mmu)!;
+        }
+        // Phase 2b: If on Route 22 (0x21), navigate East towards Viridian City (0x01)
+        else if (nav.currentMapId === 0x21) {
+          this.addLog('nav', '🗺️ Navigation sur Route 22 vers le passage Est (Jadielle)...');
+          await this.navigateRoute22ToViridian(mmu);
+          if (!this.isRunning) return false;
           nav = readNavigationState(mmu)!;
         }
 
-        if (!this.isRunning) return false;
-
-        // Now in the same outdoor map (e.g. Viridian City)
-        this.addLog(
-          'step',
-          `🚶 Trajet vers la porte de ${targetCenter.name} (${targetCenter.doorCoords.x}, ${targetCenter.doorCoords.y})...`,
-          { x: nav.playerX, y: nav.playerY },
-          nav.currentMapId
-        );
-
-        this.notifyProgress(
-          `Déplacement vers la porte du ${targetCenter.name} (${targetCenter.doorCoords.x}, ${targetCenter.doorCoords.y})...`,
-          targetCenter.doorCoords,
-          { x: nav.playerX, y: nav.playerY },
-          Math.abs(nav.playerX - targetCenter.doorCoords.x) + Math.abs(nav.playerY - targetCenter.doorCoords.y)
-        );
-
-        const reachedDoor = await this.walkToCoordinates(
-          mmu,
-          targetCenter.doorCoords.x,
-          targetCenter.doorCoords.y + 1 // Position directly in front of the door
-        );
-
-        if (!reachedDoor || !this.isRunning) {
+        // Phase 2c: In Viridian City (0x01) -> Navigate to Pokémon Center door (23, 26)
+        if (nav.currentMapId === targetCenter.outdoorMapId) {
+          this.addLog('nav', '🏙️ Navigation dans Jadielle vers le Centre Pokémon...');
+          await this.navigateViridianToPokecenterDoor(mmu, targetCenter.doorCoords);
           if (!this.isRunning) return false;
-          this.addLog('error', '⚠️ Impossible d\'atteindre la porte (obstacle bloquant).');
-          return false;
         }
 
-        // Step 3: Step UP into the door
+        // Step 3: Enter the door (Step UP)
         this.currentStatus = 'entering_door';
-        this.addLog('door', `🚪 Franchissement de la porte du ${targetCenter.name}...`);
+        this.addLog('door', `🚪 Entrée dans le ${targetCenter.name}...`);
         this.notifyProgress(`Entrée dans le ${targetCenter.name}...`, targetCenter.doorCoords, null, 0);
         await this.stepDirection(mmu, 'up');
-        await this.wait(600); // Wait for map transition warp
+        await this.wait(700); // Wait for warp fade transition
       }
 
-      // Step 4: Now inside the Pokémon Center
+      // Step 4: Inside the Pokémon Center
       nav = readNavigationState(mmu)!;
       if (nav.currentMapId !== targetCenter.indoorMapId) {
-        // Retry stepping up once if warp didn't trigger immediately
+        // Retry stepping up once if warp didn't trigger
         await this.stepDirection(mmu, 'up');
-        await this.wait(600);
+        await this.wait(700);
         nav = readNavigationState(mmu)!;
       }
 
@@ -263,7 +245,7 @@ export class LocalNavigationEngine {
       this.currentStatus = 'approaching_nurse';
       this.notifyProgress('Approche du comptoir de l\'Infirmière Joëlle (3, 3)...', { x: 3, y: 3 }, { x: nav.playerX, y: nav.playerY }, 0);
 
-      // Walk to Nurse interaction position (X=3, Y=3)
+      // Walk to Nurse interaction tile (X=3, Y=3)
       this.addLog('step', '🚶 Déplacement vers le guichet de l\'Infirmière Joëlle (3, 3)...');
       await this.walkToCoordinates(mmu, 3, 3);
       if (!this.isRunning) return false;
@@ -293,9 +275,9 @@ export class LocalNavigationEngine {
       if (!this.isRunning) return false;
 
       // Step Down on mat to warp out
-      this.addLog('door', '🚪 Sortie du Centre Pokémon...');
+      this.addLog('door', '🚪 Sortie du Centre Pokémon vers Jadielle...');
       await this.stepDirection(mmu, 'down');
-      await this.wait(600); // Warp out to city
+      await this.wait(700); // Warp out to city
 
       // Step 7: Return to original training spot if requested
       if (returnToOrigin && this.originTrainingCoords && this.originTrainingMapId !== null) {
@@ -308,20 +290,12 @@ export class LocalNavigationEngine {
           this.originTrainingMapId
         );
 
-        this.notifyProgress(
-          `Retour vers la zone d'entraînement initiale (${this.originTrainingCoords.x}, ${this.originTrainingCoords.y})...`,
-          this.originTrainingCoords,
-          null,
-          0
+        await this.navigateReturnToOrigin(
+          mmu,
+          this.originTrainingMapId,
+          this.originTrainingCoords.x,
+          this.originTrainingCoords.y
         );
-
-        if (this.originTrainingMapId === targetCenter.outdoorMapId) {
-          await this.walkToCoordinates(mmu, this.originTrainingCoords.x, this.originTrainingCoords.y);
-        } else {
-          // If on a different map (e.g. Route 22 or Route 1), cross back
-          await this.navigateAcrossAdjacentMap(mmu, this.originTrainingMapId);
-          await this.walkToCoordinates(mmu, this.originTrainingCoords.x, this.originTrainingCoords.y);
-        }
       }
 
       this.currentStatus = 'completed';
@@ -338,6 +312,157 @@ export class LocalNavigationEngine {
     } finally {
       this.isRunning = false;
       this.releaseAllKeys();
+    }
+  }
+
+  /**
+   * Route 1 -> Viridian City Corridor Pathfinding
+   * Avoids the fences and trees on the east/west side of Route 1.
+   */
+  private async navigateRoute1ToViridian(mmu: any): Promise<void> {
+    const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
+    const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
+    const curX = mmu.read(xAddr);
+    const curY = mmu.read(yAddr);
+
+    this.addLog('step', `🚶 Alignement sur le couloir central de la Route 1 (Position: ${curX}, ${curY})...`);
+
+    // If near top of Route 1 (Y <= 10, e.g. at (15, 5))
+    if (curY <= 10) {
+      // 1. Move horizontally to the clear road at X=10 or X=11 at safe Y
+      const safeY = Math.max(curY, 4); // Y >= 4 avoids the top fence row at Y <= 3
+      if (curY < 4) {
+        await this.walkToCoordinates(mmu, curX, 4);
+      }
+      await this.walkToCoordinates(mmu, 10, safeY);
+      // 2. Walk straight North up the road to (10, 0)
+      await this.walkToCoordinates(mmu, 10, 0);
+    } else {
+      // If further south on Route 1, follow the open northbound path around ledges
+      await this.walkToCoordinates(mmu, 14, Math.min(curY, 20));
+      await this.walkToCoordinates(mmu, 14, 12);
+      await this.walkToCoordinates(mmu, 10, 12);
+      await this.walkToCoordinates(mmu, 10, 0);
+    }
+
+    // Step UP into Viridian City
+    this.addLog('nav', '🚪 Franchissement de la frontière Nord vers Jadielle...');
+    await this.stepDirection(mmu, 'up');
+    await this.stepDirection(mmu, 'up');
+    await this.wait(500);
+  }
+
+  /**
+   * Route 22 -> Viridian City Corridor Pathfinding
+   * Exit East at X=39, Y=9 into Viridian City
+   */
+  private async navigateRoute22ToViridian(mmu: any): Promise<void> {
+    const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
+    const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
+    const curX = mmu.read(xAddr);
+    const curY = mmu.read(yAddr);
+
+    this.addLog('step', `🚶 Alignement sur le chemin Est de la Route 22 (${curX}, ${curY})...`);
+    // Align to open path at Y=9
+    await this.walkToCoordinates(mmu, curX, 9);
+    // Walk to East border (39, 9)
+    await this.walkToCoordinates(mmu, 39, 9);
+
+    // Step RIGHT into Viridian City
+    this.addLog('nav', '🚪 Franchissement de la frontière Est vers Jadielle...');
+    await this.stepDirection(mmu, 'right');
+    await this.stepDirection(mmu, 'right');
+    await this.wait(500);
+  }
+
+  /**
+   * Viridian City Main Boulevard to Pokémon Center Door (23, 26)
+   */
+  private async navigateViridianToPokecenterDoor(mmu: any, doorCoords: { x: number; y: number }): Promise<void> {
+    const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
+    const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
+    const curX = mmu.read(xAddr);
+    const curY = mmu.read(yAddr);
+
+    this.addLog('step', `🚶 Progression sur les avenues de Jadielle (${curX}, ${curY}) ➜ Porte (${doorCoords.x}, ${doorCoords.y})...`);
+
+    // Main north-south street in Viridian City is along X=21..23
+    // If coming from Route 22 (West side: X < 20, Y around 8..9)
+    if (curX < 20) {
+      await this.walkToCoordinates(mmu, 21, 9);
+      await this.walkToCoordinates(mmu, 21, 26);
+    }
+    // If coming from Route 1 (South side: Y > 28, X around 21..22)
+    else if (curY > 26) {
+      await this.walkToCoordinates(mmu, 21, 26);
+    }
+    // If somewhere in north/center of city
+    else {
+      await this.walkToCoordinates(mmu, 21, curY);
+      await this.walkToCoordinates(mmu, 21, 26);
+    }
+
+    // Move to front of door at (23, 26)
+    await this.walkToCoordinates(mmu, doorCoords.x, doorCoords.y + 1);
+
+    // Turn face UP towards door
+    await this.tapKey('up', 60);
+    await this.wait(100);
+  }
+
+  /**
+   * Return journey from Viridian City back to the origin spot
+   */
+  private async navigateReturnToOrigin(
+    mmu: any,
+    targetMapId: number,
+    targetX: number,
+    targetY: number
+  ): Promise<void> {
+    const mapIdAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_ID_EN, mmu);
+    let curMap = mmu.read(mapIdAddr);
+
+    // If target is Route 1 (0x0C)
+    if (targetMapId === 0x0C) {
+      this.addLog('return', '🚶 Trajet vers la sortie Sud de Jadielle vers Route 1...');
+      // Walk down main road to South border at (21, 35)
+      await this.walkToCoordinates(mmu, 21, 26);
+      await this.walkToCoordinates(mmu, 21, 35);
+      // Step DOWN into Route 1 (10, 0)
+      await this.stepDirection(mmu, 'down');
+      await this.stepDirection(mmu, 'down');
+      await this.wait(500);
+
+      // Now on Route 1
+      this.addLog('return', `🚶 Retour au spot exact sur Route 1 (${targetX}, ${targetY})...`);
+      // If target is in north grass (Y <= 10)
+      if (targetY <= 10) {
+        await this.walkToCoordinates(mmu, 10, Math.max(targetY, 4));
+        await this.walkToCoordinates(mmu, targetX, targetY);
+      } else {
+        await this.walkToCoordinates(mmu, targetX, targetY);
+      }
+    }
+    // If target is Route 22 (0x21)
+    else if (targetMapId === 0x21) {
+      this.addLog('return', '🚶 Trajet vers la sortie Ouest de Jadielle vers Route 22...');
+      // Walk to West exit at (0, 9)
+      await this.walkToCoordinates(mmu, 21, 26);
+      await this.walkToCoordinates(mmu, 21, 9);
+      await this.walkToCoordinates(mmu, 0, 9);
+      // Step LEFT into Route 22 (39, 9)
+      await this.stepDirection(mmu, 'left');
+      await this.stepDirection(mmu, 'left');
+      await this.wait(500);
+
+      // Now on Route 22
+      this.addLog('return', `🚶 Retour au spot exact sur Route 22 (${targetX}, ${targetY})...`);
+      await this.walkToCoordinates(mmu, targetX, targetY);
+    }
+    // If target was inside Viridian City
+    else if (targetMapId === 0x01) {
+      this.addLog('return', `🚶 Retour au spot dans Jadielle (${targetX}, ${targetY})...`);
+      await this.walkToCoordinates(mmu, targetX, targetY);
     }
   }
 
@@ -389,7 +514,7 @@ export class LocalNavigationEngine {
     const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
     const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
 
-    let maxSteps = 150;
+    let maxSteps = 160;
     let stuckAttempts = 0;
     let lastX = -1;
     let lastY = -1;
@@ -405,9 +530,9 @@ export class LocalNavigationEngine {
       // Check if stuck against obstacle
       if (currentX === lastX && currentY === lastY) {
         stuckAttempts++;
-        if (stuckAttempts >= 3) {
-          this.addLog('step', `⚠️ Obstacle détecté en (${currentX}, ${currentY}), contournement...`);
-          // Obstacle avoidance: try alternate axis detour
+        if (stuckAttempts >= 2) {
+          this.addLog('step', `⚠️ Obstacle en (${currentX}, ${currentY}), contournement...`);
+          // Smart detour perpendicular to target
           await this.avoidObstacle(mmu, currentX, currentY, targetX, targetY);
           stuckAttempts = 0;
         }
@@ -418,7 +543,7 @@ export class LocalNavigationEngine {
       lastX = currentX;
       lastY = currentY;
 
-      // Determine step direction (prioritize larger delta)
+      // Determine step direction (prioritize horizontal if horizontal delta is larger, else vertical)
       const dx = targetX - currentX;
       const dy = targetY - currentY;
 
@@ -441,41 +566,6 @@ export class LocalNavigationEngine {
     return false;
   }
 
-  /**
-   * Helper to handle map transitions (e.g. crossing Route 22 to Viridian City)
-   */
-  private async navigateAcrossAdjacentMap(mmu: any, targetMapId: number): Promise<void> {
-    const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
-    const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
-    const mapIdAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_ID_EN, mmu);
-
-    const curMap = mmu.read(mapIdAddr);
-    let curX = mmu.read(xAddr);
-    let curY = mmu.read(yAddr);
-
-    // Route 22 (0x21) -> Jadielle (0x01) connects at the East border (walk Right)
-    if (curMap === 0x21 && targetMapId === 0x01) {
-      this.addLog('nav', '🗺️ Traversée de la Route 22 vers Jadielle (Bord Est)...');
-      await this.walkToCoordinates(mmu, 39, curY);
-      await this.stepDirection(mmu, 'right');
-      await this.stepDirection(mmu, 'right');
-    }
-    // Route 1 (0x0C) -> Jadielle (0x01) connects at the North border (walk Up)
-    else if (curMap === 0x0C && targetMapId === 0x01) {
-      this.addLog('nav', '🗺️ Traversée de la Route 1 vers Jadielle (Bord Nord)...');
-      await this.walkToCoordinates(mmu, curX, 0);
-      await this.stepDirection(mmu, 'up');
-      await this.stepDirection(mmu, 'up');
-    }
-    // Jadielle (0x01) -> Route 22 (0x21) connects at the West border (walk Left)
-    else if (curMap === 0x01 && targetMapId === 0x21) {
-      this.addLog('nav', '🗺️ Traversée de Jadielle vers Route 22 (Bord Ouest)...');
-      await this.walkToCoordinates(mmu, 0, 9);
-      await this.stepDirection(mmu, 'left');
-      await this.stepDirection(mmu, 'left');
-    }
-  }
-
   private async avoidObstacle(
     mmu: any,
     currentX: number,
@@ -483,19 +573,31 @@ export class LocalNavigationEngine {
     targetX: number,
     targetY: number
   ): Promise<void> {
-    if (targetX !== currentX) {
-      await this.stepDirection(mmu, 'up');
-      await this.wait(100);
-      await this.stepDirection(mmu, 'up');
-    } else {
-      await this.stepDirection(mmu, 'right');
-      await this.wait(100);
-      await this.stepDirection(mmu, 'right');
+    const dx = targetX - currentX;
+    const dy = targetY - currentY;
+
+    // If blocked trying to move horizontally, try moving vertically
+    if (Math.abs(dx) > 0) {
+      if (dy > 0 || currentY < 10) {
+        await this.stepDirection(mmu, 'down');
+      } else {
+        await this.stepDirection(mmu, 'up');
+      }
+      await this.wait(120);
+    } 
+    // If blocked trying to move vertically, try moving horizontally towards open lane
+    else {
+      if (currentX > 10) {
+        await this.stepDirection(mmu, 'left');
+      } else {
+        await this.stepDirection(mmu, 'right');
+      }
+      await this.wait(120);
     }
   }
 
   private async stepDirection(mmu: any, dir: 'left' | 'right' | 'up' | 'down'): Promise<void> {
-    // In Gen 1, holding direction for ~180-220ms performs a full 1-tile grid step
+    // In Gen 1, holding direction for ~190ms performs a clean 1-tile grid step
     await this.tapKey(dir, 190);
   }
 
