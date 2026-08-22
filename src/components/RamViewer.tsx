@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { GameBoy } from '../emulator/gameboy';
-import { POKEMON_YELLOW_RAM, resolveAddr, getRamOffset } from '../services/pokemonYellowRam';
-import { Cpu, Activity, MousePointer2, Shield, Sparkles } from 'lucide-react';
+import { POKEMON_YELLOW_RAM, resolveAddr } from '../services/pokemonYellowRam';
+import { readNavigationState, NavigationRoute } from '../services/worldNavigation';
+import { Cpu, Sparkles, Compass, MapPin, DoorOpen, ShieldAlert, HeartPulse } from 'lucide-react';
 import { TrainerBotMode } from '../services/simpleTrainerBot';
 
 interface RamViewerProps {
@@ -43,24 +44,40 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${msecs.toString().padStart(3, '0')}`;
   };
 
-  const [ramData, setRamData] = useState({
-    battleType: 0,
+  const [navData, setNavData] = useState<{
+    currentMapId: number;
+    mapName: string;
+    playerX: number;
+    playerY: number;
+    facing: string;
+    rawFacing: number;
+    tileset: number;
+    standingTile: number;
+    warpCount: number;
+    joyIgnore: number;
+    battleType: number;
+    isFrench: boolean;
+    partyCount: number;
+    aliveCount: number;
+    closestPokecenter: NavigationRoute | null;
+    dumpD350: number[];
+  }>({
+    currentMapId: 0,
+    mapName: 'Initialisation...',
     playerX: 0,
     playerY: 0,
-    hp: 0,
-    maxHp: 0,
-    cursor: 0,
-    topMenuY: 0,
-    topMenuX: 0,
-    maxMenu: 0,
+    facing: 'Bas ⬇️',
+    rawFacing: 0,
+    tileset: 0,
+    standingTile: 0,
+    warpCount: 0,
     joyIgnore: 0,
-    partyCount: 0,
+    battleType: 0,
     isFrench: false,
-    hpAddr: 0,
-    party1Hp: 0,
-    party1MaxHp: 0,
-    dumpD000: [] as number[],
-    dumpD150: [] as number[]
+    partyCount: 0,
+    aliveCount: 0,
+    closestPokecenter: null,
+    dumpD350: [],
   });
 
   useEffect(() => {
@@ -85,54 +102,48 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
       }
       const isFrench = titleStr.includes('JAUNE');
 
-      const bTypeAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN, mmu);
-      const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
-      const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
-      const cursorAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu);
-      const topMenuYAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu);
-      const topMenuXAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu);
-      const maxMenuAddr = resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu);
-      const joyAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
-      const hpAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_MON_HP_EN, mmu);
-      const maxHpAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_MON_MAX_HP_EN, mmu);
+      const nav = readNavigationState(mmu);
       const pCountAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_COUNT_EN, mmu);
-      const pHpAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_HP_EN, mmu);
-      const pMaxHpAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_MAX_HP_EN, mmu);
+      const partyCount = mmu.read(pCountAddr);
 
-      const hp = (mmu.read(hpAddr) << 8) | mmu.read(hpAddr + 1);
-      const maxHp = (mmu.read(maxHpAddr) << 8) | mmu.read(maxHpAddr + 1);
-      
-      const party1Hp = (mmu.read(pHpAddr) << 8) | mmu.read(pHpAddr + 1);
-      const party1MaxHp = (mmu.read(pMaxHpAddr) << 8) | mmu.read(pMaxHpAddr + 1);
-      
-      // Extract Hex Dumps
-      const dumpD000 = [];
-      for(let i=0xD000; i<=0xD02F; i++) dumpD000.push(mmu.read(i));
-      
-      const dumpD150 = [];
-      for(let i=0xD150; i<=0xD17F; i++) dumpD150.push(mmu.read(i));
+      // Check alive party count
+      let aliveCount = 0;
+      const validCount = Math.min(Math.max(partyCount, 0), 6);
+      const baseHpAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_HP_EN, mmu);
+      for (let i = 0; i < validCount; i++) {
+        const hpAddr = baseHpAddr + i * POKEMON_YELLOW_RAM.PARTY_STRUCT_SIZE;
+        const curHp = (mmu.read(hpAddr) << 8) | mmu.read(hpAddr + 1);
+        if (curHp > 0) aliveCount++;
+      }
 
-      setRamData({
-        battleType: mmu.read(bTypeAddr),
-        playerX: mmu.read(xAddr),
-        playerY: mmu.read(yAddr),
-        cursor: mmu.read(cursorAddr),
-        topMenuY: mmu.read(topMenuYAddr),
-        topMenuX: mmu.read(topMenuXAddr),
-        maxMenu: mmu.read(maxMenuAddr),
-        joyIgnore: mmu.read(joyAddr),
-        partyCount: mmu.read(pCountAddr),
-        hp,
-        maxHp,
-        isFrench,
-        hpAddr,
-        party1Hp,
-        party1MaxHp,
-        dumpD000,
-        dumpD150
-      });
+      // Extract Navigation D350-D37F dump (Maps, Warps, Coords)
+      const dumpD350: number[] = [];
+      for (let i = 0xD350; i <= 0xD37F; i++) {
+        dumpD350.push(mmu.read(i));
+      }
 
-      // Poll at 10 FPS to save CPU, it's just for viewing
+      if (nav) {
+        setNavData({
+          currentMapId: nav.currentMapId,
+          mapName: nav.mapName,
+          playerX: nav.playerX,
+          playerY: nav.playerY,
+          facing: nav.facing,
+          rawFacing: nav.rawFacing,
+          tileset: nav.tileset,
+          standingTile: nav.standingTile,
+          warpCount: nav.warpCount,
+          joyIgnore: nav.joyIgnore,
+          battleType: nav.battleType,
+          isFrench,
+          partyCount: validCount,
+          aliveCount,
+          closestPokecenter: nav.closestPokecenter,
+          dumpD350,
+        });
+      }
+
+      // Poll at 10 FPS
       setTimeout(() => {
         if (active) frameId = requestAnimationFrame(readRam);
       }, 100);
@@ -159,9 +170,9 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
         }}
       />
       <div className="flex items-center gap-2 mb-2 md:mb-3 pb-1 border-b border-emerald-900/50">
-        <Cpu className="w-4 h-4 text-emerald-400" />
+        <Compass className="w-4 h-4 text-emerald-400 animate-pulse" />
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          <h3 className="uppercase tracking-widest font-bold text-emerald-400 text-xs">Moniteur RAM Direct</h3>
+          <h3 className="uppercase tracking-widest font-bold text-emerald-400 text-xs">Navigation & Moniteur RAM Direct</h3>
           {isBotRunning && botStartTime && (
             <span className="font-mono text-emerald-300 font-bold bg-emerald-950/50 px-2 py-0.5 rounded text-[11px] border border-emerald-500/30">
               {formatTimer(elapsedMs)}
@@ -170,123 +181,125 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           {isBotRunning && botMode && (
             <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-amber-300 bg-amber-950/40 border border-amber-500/30 px-1.5 py-0.5 rounded">
               <Sparkles className="w-2.5 h-2.5" />
-              {botMode === 'train_slot_1' ? 'Slot 1' : 'Continu'}
+              {botMode === 'train_slot_1' ? 'Entraînement' : 'Continu'}
             </span>
           )}
         </div>
         <span className="ml-auto opacity-75 font-bold bg-emerald-900/30 px-2 py-0.5 rounded-full">
-          ROM: {ramData.isFrench ? 'FR' : 'EN'}
+          ROM: {navData.isFrench ? 'FR' : 'EN'}
         </span>
       </div>
       
       <div className="grid grid-cols-2 gap-x-2 md:gap-x-4 gap-y-2 relative z-10 overflow-y-auto max-h-full pb-2">
         
-        {/* Battle State */}
+        {/* Current Map Name & ID */}
+        <div className="col-span-2 flex flex-col bg-emerald-950/30 p-2 rounded border border-emerald-800/40 shadow-sm">
+          <span className="text-emerald-600 uppercase font-bold flex justify-between items-center text-[10px]">
+            <span className="flex items-center gap-1"><MapPin className="w-3 h-3 text-emerald-400" /> Zone Actuelle (wCurMap: 0xD35E)</span>
+            <span className="font-bold text-emerald-300">{hexFormat(navData.currentMapId)}</span>
+          </span>
+          <span className="font-bold text-emerald-200 text-xs sm:text-[13px] truncate mt-0.5">
+            {navData.mapName}
+          </span>
+        </div>
+
+        {/* Player Coordinates & Direction */}
         <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
           <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span>État (D057)</span>
-            <span className="opacity-60">{hexFormat(ramData.battleType)}</span>
+            <span>Position (D362, D361)</span>
+            <span className="opacity-60">{hexFormat(navData.playerX)},{hexFormat(navData.playerY)}</span>
           </span>
           <span className="font-bold text-emerald-300">
-            {ramData.battleType === 0 ? '🟢 Carte (Libre)' : 
-             ramData.battleType === 1 ? '⚔️ Combat Sauvage' : 
-             ramData.battleType === 2 ? '⚔️ Combat Dresseur' : 
+            X: {navData.playerX} | Y: {navData.playerY}
+          </span>
+        </div>
+
+        {/* Player Facing Direction */}
+        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
+          <span className="text-emerald-700 uppercase font-bold flex justify-between">
+            <span>Orientation (C109)</span>
+            <span className="opacity-60">{hexFormat(navData.rawFacing)}</span>
+          </span>
+          <span className="font-bold text-emerald-300">
+            {navData.facing}
+          </span>
+        </div>
+
+        {/* Warps / Doors Count */}
+        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
+          <span className="text-emerald-700 uppercase font-bold flex justify-between">
+            <span className="flex items-center gap-1"><DoorOpen className="w-3 h-3 text-emerald-500" /> Portes / Warps (D36C)</span>
+            <span className="opacity-60">{hexFormat(navData.warpCount)}</span>
+          </span>
+          <span className="font-bold text-emerald-300">
+            {navData.warpCount} porte(s) sur la carte
+          </span>
+        </div>
+
+        {/* Standing Tile & Tileset */}
+        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
+          <span className="text-emerald-700 uppercase font-bold flex justify-between">
+            <span>Tuile (D35B) & Décor (D367)</span>
+            <span className="opacity-60">{hexFormat(navData.standingTile)}</span>
+          </span>
+          <span className="font-bold text-emerald-300">
+            Tuile {hexFormat(navData.standingTile)} | {navData.tileset === 0 ? 'Extérieur (Overworld)' : navData.tileset === 1 ? 'Intérieur (Pokécenter/Shop)' : `Tileset ${navData.tileset}`}
+          </span>
+        </div>
+
+        {/* Game/Battle State */}
+        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
+          <span className="text-emerald-700 uppercase font-bold flex justify-between">
+            <span>État Jeu (D057)</span>
+            <span className="opacity-60">{hexFormat(navData.battleType)}</span>
+          </span>
+          <span className="font-bold text-emerald-300">
+            {navData.battleType === 0 ? '🟢 Carte (Libre)' : 
+             navData.battleType === 1 ? '⚔️ Combat Sauvage' : 
+             navData.battleType === 2 ? '⚔️ Combat Dresseur' : 
              'Inconnu'}
           </span>
         </div>
-        
-        {/* JoyIgnore / Lock */}
+
+        {/* Joypad Lock / Dialogue State */}
         <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
           <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span>JoyLock (CD6B)</span>
-            <span className="opacity-60">{hexFormat(ramData.joyIgnore)}</span>
+            <span>Touches (CD6B)</span>
+            <span className="opacity-60">{hexFormat(navData.joyIgnore)}</span>
           </span>
           <span className="font-bold text-emerald-300">
-            {ramData.joyIgnore === 0 ? '🟢 Prêt (Touches OK)' : '🔴 Verrouillé (Texte/Anim)'}
+            {navData.joyIgnore === 0 ? '🟢 Contrôles Libres' : '🔴 Texte/Anim (Verrouillé)'}
           </span>
         </div>
 
-        {/* Menu Cursor */}
-        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
-          <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span>Curseur (CC26)</span>
-            <span className="opacity-60">{hexFormat(ramData.cursor)}</span>
+        {/* Module 1: Closest Pokécenter Target & Status */}
+        <div className="col-span-2 flex flex-col bg-emerald-950/30 p-2 rounded border border-emerald-800/40 shadow-sm">
+          <span className="text-emerald-500 uppercase font-bold flex justify-between items-center text-[10px]">
+            <span className="flex items-center gap-1"><HeartPulse className="w-3.5 h-3.5 text-emerald-400" /> Module 1 : Centre Pokémon le plus proche</span>
+            <span className="font-bold text-emerald-400">Équipe : {navData.aliveCount}/{navData.partyCount} en vie</span>
           </span>
-          <span className="font-bold text-emerald-300">
-            Slot {ramData.cursor + 1} <span className="opacity-60">/ (Max Index: {ramData.maxMenu})</span>
-          </span>
+          {navData.closestPokecenter ? (
+            <div className="mt-1 flex flex-col gap-0.5 text-emerald-200">
+              <div className="font-bold text-emerald-300 flex items-center justify-between">
+                <span>📍 {navData.closestPokecenter.targetPokecenter.name}</span>
+                <span className="text-[10px] bg-emerald-900/50 px-1.5 py-0.5 rounded text-emerald-400 border border-emerald-700/30">
+                  {navData.closestPokecenter.isAlreadyInside ? 'À l\'intérieur' : `Distance : ~${navData.closestPokecenter.directDistance} pas`}
+                </span>
+              </div>
+              <p className="text-[10px] text-emerald-400/90 font-normal leading-snug">
+                {navData.closestPokecenter.nextStepDescription}
+              </p>
+            </div>
+          ) : (
+            <span className="text-emerald-400/70 text-[10px] italic mt-0.5">Calcul de l'itinéraire vers le Centre Pokémon...</span>
+          )}
         </div>
 
-        {/* Menu Position */}
-        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
-          <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span>Menu (CC24, CC25)</span>
-            <span className="opacity-60">{hexFormat(ramData.topMenuY)},{hexFormat(ramData.topMenuX)}</span>
-          </span>
-          <span className="font-bold text-emerald-300">
-            {ramData.battleType > 0 ? (
-              ramData.topMenuY === 14 && ramData.topMenuX === 9 ? '⚔️ Base (Combat)' :
-              ramData.topMenuY === 12 && ramData.topMenuX === 5 ? '💥 Attaques' :
-              ramData.topMenuY === 4 && ramData.topMenuX === 15 ? '🎒 Sac / Objets' :
-              ramData.topMenuY === 1 && ramData.topMenuX === 0 ? '🐾 PKMN (Équipe)' :
-              ramData.topMenuY === 10 && ramData.topMenuX === 14 ? '❓ Changer PKMN (Oui/Non)' :
-              `Autre (Y:${ramData.topMenuY}, X:${ramData.topMenuX})`
-            ) : `(Hors Combat)`}
-          </span>
-        </div>
-
-        {/* Overworld Coordinates */}
-        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
-          <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span>Coords X,Y</span>
-            <span className="opacity-60">{hexFormat(ramData.playerX)},{hexFormat(ramData.playerY)}</span>
-          </span>
-          <span className="font-bold text-emerald-300">
-            X: {ramData.playerX} | Y: {ramData.playerY}
-          </span>
-        </div>
-
-        {/* Battle HP */}
-        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
-          <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span>HP Combat (D015)</span>
-            <span className="opacity-60">[{hexFormat(ramData.hpAddr, 4)}]</span>
-          </span>
-          <span className="font-bold text-emerald-300">
-            {ramData.hp} / {ramData.maxHp}
-          </span>
-        </div>
-
-        {/* Party Count */}
-        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
-          <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span>Équipe (D163)</span>
-            <span className="opacity-60">{hexFormat(ramData.partyCount)}</span>
-          </span>
-          <span className="font-bold text-emerald-300">
-            {ramData.partyCount} Pokémon(s)
-          </span>
-        </div>
-        
-        {/* Party Mon 1 HP */}
-        <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
-          <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span>HP Slot 1 (D16C)</span>
-          </span>
-          <span className="font-bold text-emerald-300">
-            {ramData.party1Hp} / {ramData.party1MaxHp}
-          </span>
-        </div>
-
-        {/* Hex Dumps for debugging */}
-        <div className="col-span-2 mt-2 pt-2 border-t border-emerald-900/50 flex flex-col gap-2">
+        {/* Hex Dump D350-D37F (Navigation / Maps / Warps) */}
+        <div className="col-span-2 mt-1 pt-1.5 border-t border-emerald-900/50 flex flex-col gap-1">
           <div className="text-[9px] leading-tight text-emerald-600/80 break-all">
-            <strong className="text-emerald-500">D000-D02F:</strong>{' '}
-            {ramData.dumpD000.map((b) => b.toString(16).padStart(2, '0')).join(' ')}
-          </div>
-          <div className="text-[9px] leading-tight text-emerald-600/80 break-all">
-            <strong className="text-emerald-500">D150-D17F:</strong>{' '}
-            {ramData.dumpD150.map((b) => b.toString(16).padStart(2, '0')).join(' ')}
+            <strong className="text-emerald-500">D350-D37F (Maps/Coords/Warps):</strong>{' '}
+            {navData.dumpD350.map((b) => b.toString(16).padStart(2, '0')).join(' ')}
           </div>
         </div>
 
@@ -294,3 +307,4 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     </div>
   );
 }
+

@@ -107,10 +107,29 @@ export const POKEMON_YELLOW_RAM = {
   PLAYER_X_FR: 0xD361,
   PLAYER_Y_FR: 0xD360,
 
-  // Overworld Map ID
+  // Overworld Map ID (0xD35E in Yellow EN, 0xD35D in FR)
   MAP_ID_EN: 0xD35E,
   MAP_ID_FR: 0xD35D,
-  
+
+  // Player Direction (Sprite 0 facing direction at 0xC109: 0x00=Down, 0x04=Up, 0x08=Left, 0x0C=Right)
+  PLAYER_DIR_EN: 0xC109,
+
+  // Current Map Tileset (0xD367 in Yellow EN: 0=Overworld, 1=Pokecenter/Mart, 2=Indoors, 3=Forest/Cave...)
+  MAP_TILESET_EN: 0xD367,
+  MAP_TILESET_FR: 0xD366,
+
+  // Tile player is currently standing on (0xD35B in Yellow EN)
+  TILE_PLAYER_STANDING_EN: 0xD35B,
+  TILE_PLAYER_STANDING_FR: 0xD35A,
+
+  // Number of Warps (doors/exits) on current map (0xD36C in EN)
+  WARP_COUNT_EN: 0xD36C,
+  WARP_COUNT_FR: 0xD36B,
+
+  // Warp table entries start address (0xD36D in EN, each warp is 4 bytes: [Y, X, target_warp_id, target_map_id])
+  WARP_ENTRIES_BASE_EN: 0xD36D,
+  WARP_ENTRIES_BASE_FR: 0xD36C,
+
   // Text box / Menu Joypad input lock status (0 = ready for input, >0 = locked or scrolling)
   JOY_IGNORE_EN: 0xCD6B,
   JOY_IGNORE_FR: 0xCD6A,

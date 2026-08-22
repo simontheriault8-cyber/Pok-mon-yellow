@@ -1,0 +1,386 @@
+// Module 1: World Navigation & Pokécenter Topological Graph for Pokémon Yellow (Gen 1)
+import { POKEMON_YELLOW_RAM, resolveAddr } from './pokemonYellowRam';
+
+export interface WarpInfo {
+  index: number;
+  y: number;
+  x: number;
+  targetWarpId: number;
+  targetMapId: number;
+}
+
+export interface PokecenterLocation {
+  id: string;
+  name: string;
+  outdoorMapId: number;
+  doorCoords: { x: number; y: number };
+  indoorMapId: number;
+  nurseCoords: { x: number; y: number }; // Nurse counter position (interact facing UP)
+}
+
+export interface NavigationRoute {
+  targetPokecenter: PokecenterLocation;
+  isAlreadyInside: boolean;
+  mapRoute: number[];
+  directDistance: number;
+  nextStepDescription: string;
+}
+
+// Complete Gen 1 / Pokémon Yellow Map Name Directory
+export const POKEMON_YELLOW_MAPS: Record<number, string> = {
+  0x00: 'Bourg Palette (Pallet Town)',
+  0x01: 'Jadielle (Viridian City)',
+  0x02: 'Argenta (Pewter City)',
+  0x03: 'Azuria (Cerulean City)',
+  0x04: 'Lavanville (Lavender Town)',
+  0x05: 'Carmin sur Mer (Vermilion City)',
+  0x06: 'Céladopole (Celadon City)',
+  0x07: 'Parmanie (Fuchsia City)',
+  0x08: 'Cramois\'Île (Cinnabar Island)',
+  0x09: 'Plateau Indigo (Indigo Plateau)',
+  0x0A: 'Safrania (Saffron City)',
+  0x0C: 'Route 1',
+  0x0D: 'Route 2',
+  0x0E: 'Route 3',
+  0x0F: 'Route 4 (Ext. Mt Sélénite)',
+  0x10: 'Route 5',
+  0x11: 'Route 6',
+  0x12: 'Route 7',
+  0x13: 'Route 8',
+  0x14: 'Route 9',
+  0x15: 'Route 10 (Nord)',
+  0x16: 'Route 11',
+  0x17: 'Route 12',
+  0x18: 'Route 10 (Sud / Tunnel)',
+  0x19: 'Route 13',
+  0x1A: 'Route 14',
+  0x1B: 'Route 15',
+  0x1C: 'Route 16',
+  0x1D: 'Route 17 (Piste Cyclable)',
+  0x1E: 'Route 18',
+  0x1F: 'Route 19 (Chenal)',
+  0x20: 'Route 20 (Chenal)',
+  0x21: 'Route 22 (Ligue)',
+  0x22: 'Route 21 (Chenal)',
+  0x23: 'Route 23 (Victoire)',
+  0x24: 'Route 24 (Pont Pépite)',
+  0x25: 'Route 25 (Maison Léo)',
+  0x33: 'Forêt de Jade (Viridian Forest)',
+  0x3B: 'Mont Sélénite 1 (Mt Moon)',
+  // Centres Pokémon intérieurs
+  0x44: 'Centre PKMN Jadielle',
+  0x45: 'Centre PKMN Argenta',
+  0x46: 'Centre PKMN Azuria',
+  0x47: 'Centre PKMN Lavanville',
+  0x48: 'Centre PKMN Carmin',
+  0x49: 'Centre PKMN Céladopole',
+  0x4A: 'Centre PKMN Parmanie',
+  0x4B: 'Centre PKMN Cramois\'Île',
+  0x4C: 'Centre PKMN Plateau Indigo',
+  0x4D: 'Centre PKMN Safrania',
+  0x54: 'Centre PKMN Route 4 (Mt Sélénite)',
+  0x58: 'Centre PKMN Route 10 (Grotte)',
+};
+
+// Registered Pokémon Centers across Kanto with exact door warps & nurse positions
+export const POKECENTERS: PokecenterLocation[] = [
+  {
+    id: 'viridian',
+    name: 'Centre PKMN Jadielle',
+    outdoorMapId: 0x01,
+    doorCoords: { x: 13, y: 25 },
+    indoorMapId: 0x44,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'pewter',
+    name: 'Centre PKMN Argenta',
+    outdoorMapId: 0x02,
+    doorCoords: { x: 13, y: 25 },
+    indoorMapId: 0x45,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'route4',
+    name: 'Centre PKMN Route 4 (Mont Sélénite)',
+    outdoorMapId: 0x0F,
+    doorCoords: { x: 11, y: 5 },
+    indoorMapId: 0x54,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'cerulean',
+    name: 'Centre PKMN Azuria',
+    outdoorMapId: 0x03,
+    doorCoords: { x: 19, y: 17 },
+    indoorMapId: 0x46,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'vermilion',
+    name: 'Centre PKMN Carmin sur Mer',
+    outdoorMapId: 0x05,
+    doorCoords: { x: 11, y: 3 },
+    indoorMapId: 0x48,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'route10',
+    name: 'Centre PKMN Route 10 (Grotte)',
+    outdoorMapId: 0x18,
+    doorCoords: { x: 11, y: 19 },
+    indoorMapId: 0x58,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'lavender',
+    name: 'Centre PKMN Lavanville',
+    outdoorMapId: 0x04,
+    doorCoords: { x: 5, y: 5 },
+    indoorMapId: 0x47,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'celadon',
+    name: 'Centre PKMN Céladopole',
+    outdoorMapId: 0x06,
+    doorCoords: { x: 41, y: 9 },
+    indoorMapId: 0x49,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'fuchsia',
+    name: 'Centre PKMN Parmanie',
+    outdoorMapId: 0x07,
+    doorCoords: { x: 19, y: 27 },
+    indoorMapId: 0x4A,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'saffron',
+    name: 'Centre PKMN Safrania',
+    outdoorMapId: 0x0A,
+    doorCoords: { x: 9, y: 29 },
+    indoorMapId: 0x4D,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'cinnabar',
+    name: 'Centre PKMN Cramois\'Île',
+    outdoorMapId: 0x08,
+    doorCoords: { x: 11, y: 11 },
+    indoorMapId: 0x4B,
+    nurseCoords: { x: 3, y: 2 },
+  },
+  {
+    id: 'indigo',
+    name: 'Centre PKMN Plateau Indigo',
+    outdoorMapId: 0x09,
+    doorCoords: { x: 9, y: 5 },
+    indoorMapId: 0x4C,
+    nurseCoords: { x: 3, y: 2 },
+  },
+];
+
+// World Topological Map Graph (Adjacent map connections for routing)
+const MAP_ADJACENCY: Record<number, number[]> = {
+  0x00: [0x0C, 0x22], // Bourg Palette -> Route 1, Route 21
+  0x0C: [0x00, 0x01], // Route 1 -> Bourg Palette, Jadielle
+  0x01: [0x0C, 0x0D, 0x21, 0x44], // Jadielle -> Route 1, Route 2, Route 22, Pokécenter
+  0x44: [0x01], // Pokécenter Jadielle -> Jadielle
+  0x0D: [0x01, 0x02, 0x33], // Route 2 -> Jadielle, Argenta, Forêt de Jade
+  0x33: [0x0D], // Forêt de Jade -> Route 2
+  0x02: [0x0D, 0x0E, 0x45], // Argenta -> Route 2, Route 3, Pokécenter
+  0x45: [0x02], // Pokécenter Argenta -> Argenta
+  0x0E: [0x02, 0x0F, 0x3B], // Route 3 -> Argenta, Route 4, Mt Sélénite
+  0x0F: [0x0E, 0x03, 0x54], // Route 4 -> Route 3, Azuria, Pokécenter Mt Moon
+  0x54: [0x0F], // Pokécenter Mt Moon -> Route 4
+  0x03: [0x0F, 0x10, 0x14, 0x24, 0x46], // Azuria -> Route 4, Route 5, Route 9, Route 24, Pokécenter
+  0x46: [0x03], // Pokécenter Azuria -> Azuria
+  0x24: [0x03, 0x25], // Route 24 -> Azuria, Route 25
+  0x25: [0x24], // Route 25 -> Route 24
+  0x10: [0x03, 0x0A], // Route 5 -> Azuria, Safrania
+  0x0A: [0x10, 0x11, 0x12, 0x13, 0x4D], // Safrania
+  0x4D: [0x0A], // Pokécenter Safrania -> Safrania
+  0x11: [0x0A, 0x05], // Route 6 -> Safrania, Carmin
+  0x05: [0x11, 0x16, 0x48], // Carmin -> Route 6, Route 11, Pokécenter
+  0x48: [0x05], // Pokécenter Carmin -> Carmin
+  0x12: [0x0A, 0x06], // Route 7 -> Safrania, Céladopole
+  0x06: [0x12, 0x1C, 0x49], // Céladopole
+  0x49: [0x06], // Pokécenter Céladopole -> Céladopole
+  0x13: [0x0A, 0x04], // Route 8 -> Safrania, Lavanville
+  0x04: [0x13, 0x17, 0x18, 0x47], // Lavanville -> Route 8, Route 12, Route 10, Pokécenter
+  0x47: [0x04], // Pokécenter Lavanville -> Lavanville
+  0x14: [0x03, 0x15], // Route 9 -> Azuria, Route 10 Nord
+  0x15: [0x14, 0x18], // Route 10 Nord -> Route 9, Route 10 Sud
+  0x18: [0x15, 0x04, 0x58], // Route 10 Sud -> Lavanville, Pokécenter Grotte
+  0x58: [0x18], // Pokécenter Route 10 -> Route 10
+  0x17: [0x04, 0x19], // Route 12 -> Lavanville, Route 13
+  0x19: [0x17, 0x1A], // Route 13 -> Route 12, Route 14
+  0x1A: [0x19, 0x1B], // Route 14 -> Route 13, Route 15
+  0x1B: [0x1A, 0x07], // Route 15 -> Route 14, Parmanie
+  0x07: [0x1B, 0x1E, 0x1F, 0x4A], // Parmanie -> Route 15, Route 18, Route 19, Pokécenter
+  0x4A: [0x07], // Pokécenter Parmanie -> Parmanie
+  0x1C: [0x06, 0x1D], // Route 16 -> Céladopole, Route 17
+  0x1D: [0x1C, 0x1E], // Route 17 -> Route 16, Route 18
+  0x1E: [0x1D, 0x07], // Route 18 -> Route 17, Parmanie
+  0x1F: [0x07, 0x20], // Route 19 -> Parmanie, Route 20
+  0x20: [0x1F, 0x08], // Route 20 -> Route 19, Cramois'Île
+  0x08: [0x20, 0x22, 0x4B], // Cramois'Île -> Route 20, Route 21, Pokécenter
+  0x4B: [0x08], // Pokécenter Cramois'Île -> Cramois'Île
+  0x22: [0x08, 0x00], // Route 21 -> Cramois'Île, Bourg Palette
+  0x21: [0x01, 0x23], // Route 22 -> Jadielle, Route 23
+  0x23: [0x21, 0x09], // Route 23 -> Route 22, Plateau Indigo
+  0x09: [0x23, 0x4C], // Plateau Indigo -> Route 23, Pokécenter
+  0x4C: [0x09], // Pokécenter Plateau Indigo -> Plateau Indigo
+};
+
+// BFS Pathfinding on Map Topology Graph
+export function findShortestMapPath(startMapId: number, goalMapId: number): number[] | null {
+  if (startMapId === goalMapId) return [startMapId];
+
+  const queue: { mapId: number; path: number[] }[] = [{ mapId: startMapId, path: [startMapId] }];
+  const visited = new Set<number>([startMapId]);
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const neighbors = MAP_ADJACENCY[current.mapId] || [];
+
+    for (const neighbor of neighbors) {
+      if (neighbor === goalMapId) {
+        return [...current.path, neighbor];
+      }
+      if (!visited.has(neighbor)) {
+        visited.add(neighbor);
+        queue.push({ mapId: neighbor, path: [...current.path, neighbor] });
+      }
+    }
+  }
+  return null;
+}
+
+// Module 1 Core: Find closest Pokécenter relative to current player position
+export function findClosestPokecenter(currentMapId: number, playerX: number, playerY: number): NavigationRoute | null {
+  // Check if player is already inside a Pokémon Center
+  const insideCenter = POKECENTERS.find(c => c.indoorMapId === currentMapId);
+  if (insideCenter) {
+    const distToNurse = Math.abs(playerX - insideCenter.nurseCoords.x) + Math.abs(playerY - insideCenter.nurseCoords.y);
+    return {
+      targetPokecenter: insideCenter,
+      isAlreadyInside: true,
+      mapRoute: [currentMapId],
+      directDistance: distToNurse,
+      nextStepDescription: `Déjà dans le ${insideCenter.name} -> Approcher de l'infirmière (${distToNurse} pas)`,
+    };
+  }
+
+  let bestCenter: PokecenterLocation | null = null;
+  let bestPath: number[] = [];
+  let bestScore = Infinity;
+
+  for (const center of POKECENTERS) {
+    const path = findShortestMapPath(currentMapId, center.outdoorMapId);
+    if (!path) continue;
+
+    // Path length in maps (weighted 100 tiles per map transition) + Manhattan distance to door
+    const mapHops = path.length - 1;
+    const doorDistance = (currentMapId === center.outdoorMapId)
+      ? (Math.abs(playerX - center.doorCoords.x) + Math.abs(playerY - center.doorCoords.y))
+      : (mapHops * 100);
+
+    const totalScore = mapHops * 100 + doorDistance;
+
+    if (totalScore < bestScore) {
+      bestScore = totalScore;
+      bestCenter = center;
+      bestPath = path;
+    }
+  }
+
+  if (!bestCenter) return null;
+
+  const isSameMap = currentMapId === bestCenter.outdoorMapId;
+  const distToDoor = Math.abs(playerX - bestCenter.doorCoords.x) + Math.abs(playerY - bestCenter.doorCoords.y);
+
+  let nextStepDescription = '';
+  if (isSameMap) {
+    nextStepDescription = `Porte du ${bestCenter.name} en (${bestCenter.doorCoords.x}, ${bestCenter.doorCoords.y}) - Dist: ${distToDoor} pas`;
+  } else {
+    const nextMapId = bestPath[1];
+    const nextMapName = POKEMON_YELLOW_MAPS[nextMapId] || `Map 0x${nextMapId.toString(16).toUpperCase()}`;
+    nextStepDescription = `Rejoindre ${nextMapName} en direction du ${bestCenter.name} (${bestPath.length - 1} zone(s) restante(s))`;
+  }
+
+  return {
+    targetPokecenter: bestCenter,
+    isAlreadyInside: false,
+    mapRoute: bestPath,
+    directDistance: isSameMap ? distToDoor : bestScore,
+    nextStepDescription,
+  };
+}
+
+// Memory Inspection: Read Real-Time Navigation State from Game Boy RAM
+export function readNavigationState(mmu: any) {
+  if (!mmu) return null;
+
+  const mapIdAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_ID_EN, mmu);
+  const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
+  const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
+  const dirAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_DIR_EN, mmu);
+  const tilesetAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_TILESET_EN, mmu);
+  const standingTileAddr = resolveAddr(POKEMON_YELLOW_RAM.TILE_PLAYER_STANDING_EN, mmu);
+  const warpCountAddr = resolveAddr(POKEMON_YELLOW_RAM.WARP_COUNT_EN, mmu);
+  const warpBaseAddr = resolveAddr(POKEMON_YELLOW_RAM.WARP_ENTRIES_BASE_EN, mmu);
+  const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
+  const battleTypeAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN, mmu);
+
+  const currentMapId = mmu.read(mapIdAddr);
+  const playerX = mmu.read(xAddr);
+  const playerY = mmu.read(yAddr);
+  const rawFacing = mmu.read(dirAddr);
+  const tileset = mmu.read(tilesetAddr);
+  const standingTile = mmu.read(standingTileAddr);
+  const rawWarpCount = mmu.read(warpCountAddr);
+  const joyIgnore = mmu.read(joyIgnoreAddr);
+  const battleType = mmu.read(battleTypeAddr);
+
+  // Decode Player Facing Direction
+  let facingStr = 'Bas ⬇️';
+  if (rawFacing === 0x04) facingStr = 'Haut ⬆️';
+  else if (rawFacing === 0x08) facingStr = 'Gauche ⬅️';
+  else if (rawFacing === 0x0C) facingStr = 'Droite ➡️';
+
+  // Read Warps
+  const warpCount = Math.min(rawWarpCount, 16);
+  const warps: WarpInfo[] = [];
+  for (let i = 0; i < warpCount; i++) {
+    const entryAddr = warpBaseAddr + i * 4;
+    warps.push({
+      index: i,
+      y: mmu.read(entryAddr),
+      x: mmu.read(entryAddr + 1),
+      targetWarpId: mmu.read(entryAddr + 2),
+      targetMapId: mmu.read(entryAddr + 3),
+    });
+  }
+
+  const mapName = POKEMON_YELLOW_MAPS[currentMapId] || `Zone inconnue (0x${currentMapId.toString(16).toUpperCase()})`;
+  const route = findClosestPokecenter(currentMapId, playerX, playerY);
+
+  return {
+    currentMapId,
+    mapName,
+    playerX,
+    playerY,
+    facing: facingStr,
+    rawFacing,
+    tileset,
+    standingTile,
+    warpCount,
+    warps,
+    joyIgnore,
+    battleType,
+    closestPokecenter: route,
+  };
+}
