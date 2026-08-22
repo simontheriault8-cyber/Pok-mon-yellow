@@ -332,6 +332,8 @@ export function readNavigationState(mmu: any) {
   const dirAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_DIR_EN, mmu);
   const tilesetAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_TILESET_EN, mmu);
   const standingTileAddr = resolveAddr(POKEMON_YELLOW_RAM.TILE_PLAYER_STANDING_EN, mmu);
+  const mapHeightAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_HEIGHT_EN, mmu);
+  const mapWidthAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_WIDTH_EN, mmu);
   const warpCountAddr = resolveAddr(POKEMON_YELLOW_RAM.WARP_COUNT_EN, mmu);
   const warpBaseAddr = resolveAddr(POKEMON_YELLOW_RAM.WARP_ENTRIES_BASE_EN, mmu);
   const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
@@ -343,6 +345,8 @@ export function readNavigationState(mmu: any) {
   const rawFacing = mmu.read(dirAddr);
   const tileset = mmu.read(tilesetAddr);
   const standingTile = mmu.read(standingTileAddr);
+  const mapHeightBlocks = mmu.read(mapHeightAddr);
+  const mapWidthBlocks = mmu.read(mapWidthAddr);
   const rawWarpCount = mmu.read(warpCountAddr);
   const joyIgnore = mmu.read(joyIgnoreAddr);
   const battleType = mmu.read(battleTypeAddr);
@@ -353,13 +357,13 @@ export function readNavigationState(mmu: any) {
   else if (rawFacing === 0x08) facingStr = 'Gauche ⬅️';
   else if (rawFacing === 0x0C) facingStr = 'Droite ➡️';
 
-  // Read Warps
-  const warpCount = Math.min(rawWarpCount, 16);
+  // Read Warps (max 32 warps to be safe)
+  const warpCount = (rawWarpCount > 0 && rawWarpCount <= 32) ? rawWarpCount : 0;
   const warps: WarpInfo[] = [];
   for (let i = 0; i < warpCount; i++) {
     const entryAddr = warpBaseAddr + i * 4;
     warps.push({
-      index: i,
+      index: i + 1,
       y: mmu.read(entryAddr),
       x: mmu.read(entryAddr + 1),
       targetWarpId: mmu.read(entryAddr + 2),
@@ -379,6 +383,10 @@ export function readNavigationState(mmu: any) {
     rawFacing,
     tileset,
     standingTile,
+    mapWidth: mapWidthBlocks * 2, // 1 block = 2x2 tiles
+    mapHeight: mapHeightBlocks * 2,
+    mapWidthBlocks,
+    mapHeightBlocks,
     warpCount,
     warps,
     joyIgnore,

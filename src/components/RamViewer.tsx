@@ -59,9 +59,12 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     isFrench: boolean;
     partyCount: number;
     aliveCount: number;
+    mapWidth: number;
+    mapHeight: number;
+    warps: WarpInfo[];
     closestPokecenter: NavigationRoute | null;
     dumpD350: number[];
-    dumpD430: number[];
+    dumpD3A0: number[];
   }>({
     currentMapId: 0,
     mapName: 'Initialisation...',
@@ -77,9 +80,12 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     isFrench: false,
     partyCount: 0,
     aliveCount: 0,
+    mapWidth: 0,
+    mapHeight: 0,
+    warps: [],
     closestPokecenter: null,
     dumpD350: [],
-    dumpD430: [],
+    dumpD3A0: [],
   });
 
   useEffect(() => {
@@ -118,16 +124,16 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
         if (curHp > 0) aliveCount++;
       }
 
-      // Extract Navigation D350-D37F dump (Maps, Coords)
+      // Extract Navigation D350-D37F dump (Maps, Coords, Dimensions)
       const dumpD350: number[] = [];
       for (let i = 0xD350; i <= 0xD37F; i++) {
         dumpD350.push(mmu.read(i));
       }
 
-      // Extract Warps D430-D44F dump
-      const dumpD430: number[] = [];
-      for (let i = 0xD430; i <= 0xD44F; i++) {
-        dumpD430.push(mmu.read(i));
+      // Extract Warps D3A0-D3DF dump (D3AE = WarpCount, D3AF = Warp entries)
+      const dumpD3A0: number[] = [];
+      for (let i = 0xD3A0; i <= 0xD3DF; i++) {
+        dumpD3A0.push(mmu.read(i));
       }
 
       if (nav) {
@@ -141,6 +147,9 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           tileset: nav.tileset,
           standingTile: nav.standingTile,
           warpCount: nav.warpCount,
+          mapWidth: nav.mapWidth,
+          mapHeight: nav.mapHeight,
+          warps: nav.warps,
           joyIgnore: nav.joyIgnore,
           battleType: nav.battleType,
           isFrench,
@@ -148,7 +157,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           aliveCount,
           closestPokecenter: nav.closestPokecenter,
           dumpD350,
-          dumpD430,
+          dumpD3A0,
         });
       }
 
@@ -237,7 +246,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
         {/* Warps / Doors Count */}
         <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
           <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span className="flex items-center gap-1"><DoorOpen className="w-3 h-3 text-emerald-500" /> Portes / Warps (D436)</span>
+            <span className="flex items-center gap-1"><DoorOpen className="w-3 h-3 text-emerald-500" /> Portes / Warps (D3AE)</span>
             <span className="opacity-60">{hexFormat(navData.warpCount)}</span>
           </span>
           <span className="font-bold text-emerald-300">
@@ -245,14 +254,14 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           </span>
         </div>
 
-        {/* Standing Tile & Tileset */}
+        {/* Standing Tile & Tileset & Map Dimensions */}
         <div className="flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
           <span className="text-emerald-700 uppercase font-bold flex justify-between">
-            <span>Tuile (D35B) & Décor (D367)</span>
-            <span className="opacity-60">{hexFormat(navData.standingTile)}</span>
+            <span>Dimensions & Décor</span>
+            <span className="opacity-60">{navData.mapWidth}x{navData.mapHeight} tuiles</span>
           </span>
           <span className="font-bold text-emerald-300">
-            Tuile {hexFormat(navData.standingTile)} | {navData.tileset === 0 ? 'Extérieur (Overworld)' : navData.tileset === 1 ? 'Intérieur (Pokécenter/Shop)' : `Tileset ${navData.tileset}`}
+            {navData.tileset === 0 ? 'Extérieur (Overworld)' : navData.tileset === 1 ? 'Intérieur (Bâtiment)' : `Tileset ${navData.tileset}`}
           </span>
         </div>
 
@@ -281,6 +290,27 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           </span>
         </div>
 
+        {/* Detected Warps on Current Map */}
+        {navData.warps.length > 0 && (
+          <div className="col-span-2 flex flex-col bg-emerald-950/20 p-1.5 rounded border border-emerald-900/40">
+            <span className="text-emerald-600 uppercase font-bold text-[9px] mb-1 flex items-center justify-between">
+              <span>🚪 Portes Détectées en RAM (D3AF+)</span>
+              <span>{navData.warps.length} entrées</span>
+            </span>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
+              {navData.warps.map((w, idx) => {
+                const targetName = POKEMON_YELLOW_MAPS[w.targetMapId] || `Map 0x${w.targetMapId.toString(16).toUpperCase()}`;
+                return (
+                  <div key={idx} className="text-[9px] bg-black/40 px-1.5 py-0.5 rounded border border-emerald-900/50 flex flex-col">
+                    <span className="text-emerald-300 font-bold">Porte #{w.index} : ({w.x}, {w.y})</span>
+                    <span className="text-emerald-500/90 truncate">➜ {targetName}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Module 1: Closest Pokécenter Target & Status */}
         <div className="col-span-2 flex flex-col bg-emerald-950/30 p-2 rounded border border-emerald-800/40 shadow-sm">
           <span className="text-emerald-500 uppercase font-bold flex justify-between items-center text-[10px]">
@@ -304,15 +334,15 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           )}
         </div>
 
-        {/* Hex Dumps (Navigation D350-D37F & Warps D430-D44F) */}
+        {/* Hex Dumps (Navigation D350-D37F & Warps D3A0-D3DF) */}
         <div className="col-span-2 mt-1 pt-1.5 border-t border-emerald-900/50 flex flex-col gap-1">
           <div className="text-[9px] leading-tight text-emerald-600/80 break-all">
-            <strong className="text-emerald-500">D350-D37F (Maps/Coords):</strong>{' '}
+            <strong className="text-emerald-500">D350-D37F (Maps/Coords/Dims):</strong>{' '}
             {navData.dumpD350.map((b) => b.toString(16).padStart(2, '0')).join(' ')}
           </div>
           <div className="text-[9px] leading-tight text-emerald-600/80 break-all">
-            <strong className="text-emerald-500">D430-D44F (Warp Table):</strong>{' '}
-            {navData.dumpD430.map((b) => b.toString(16).padStart(2, '0')).join(' ')}
+            <strong className="text-emerald-500">D3A0-D3DF (Warps/D3AE):</strong>{' '}
+            {navData.dumpD3A0.map((b) => b.toString(16).padStart(2, '0')).join(' ')}
           </div>
         </div>
 
