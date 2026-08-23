@@ -141,22 +141,22 @@ export const ZONE_BOUNDARIES: ZoneBoundary[] = [
   },
 
   // 2. Route 22 (0x21) <-> Viridian City (0x01)
-  // On Route 22, the East road into Viridian City is at Y = 13 (X: 39).
-  // In Viridian City, the West road into Route 22 is at X = 0, Y = 13.
+  // On Route 22, the East road into Viridian City is at Y = 8 or 9 (X: 39).
+  // In Viridian City, the West road into Route 22 arrives at X = 0, Y = 16.
   {
     fromMapId: 0x21,
     toMapId: 0x01,
-    fromCoords: { x: 39, y: 13 },
+    fromCoords: { x: 39, y: 8 },
     crossingDir: 'right',
-    toCoordsExpected: { x: 0, y: 13 },
+    toCoordsExpected: { x: 0, y: 16 },
     description: 'Route 22 vers Jadielle (Frontière Est)',
   },
   {
     fromMapId: 0x01,
     toMapId: 0x21,
-    fromCoords: { x: 0, y: 13 },
+    fromCoords: { x: 0, y: 16 },
     crossingDir: 'left',
-    toCoordsExpected: { x: 39, y: 13 },
+    toCoordsExpected: { x: 39, y: 8 },
     description: 'Jadielle vers Route 22 (Frontière Ouest)',
   },
 

@@ -24,31 +24,54 @@ export interface LocalMapData {
 }
 
 // Overworld (Tileset 0) Tile Classifications in Gen 1
-const OVERWORLD_WALKABLE_8x8 = new Set([
-  0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x0B, 0x1B, 0x2C, 0x2D, 0x3C, 0x3D, 0x7E, 0x7F
+// Walkable: Dirt paths, light roads, paved city streets, sidewalks, door thresholds, flowers
+export const OVERWORLD_WALKABLE_8x8 = new Set([
+  0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+  0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+  0x10, 0x11, 0x12, 0x13, 0x1B, 0x20, 0x21, 0x22, 0x23,
+  0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x3C, 0x3D, 0x3E, 0x3F,
+  0x48, 0x49, 0x50, 0x51, 0x7E, 0x7F
 ]);
 
-const OVERWORLD_GRASS_8x8 = new Set([
+// Grass tiles in Overworld
+export const OVERWORLD_GRASS_8x8 = new Set([
   0x52, 0x53, 0x54, 0x55
 ]);
 
-const OVERWORLD_LEDGE_DOWN_8x8 = new Set([
+// Hop-down Ledges (passable downwards only)
+export const OVERWORLD_LEDGE_DOWN_8x8 = new Set([
   0x36, 0x37, 0x38, 0x39
 ]);
 
+// Known strictly SOLID tiles in Overworld (Trees, mountain walls, fences, roofs, water)
+export const OVERWORLD_SOLID_8x8 = new Set([
+  // Trees (standard 4-quadrant tree)
+  0x32, 0x33, 0x34, 0x35,
+  // Fences & signposts
+  0x18, 0x19, 0x1A, 0x24, 0x2A, 0x2B,
+  // Mountain walls & cliff edges
+  0x15, 0x16, 0x17, 0x25, 0x26, 0x27, 0x3A,
+  // Water / River / Ocean
+  0x14, 0x1F,
+  // Building roofs & solid walls
+  0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
+  0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F,
+  0x70, 0x71, 0x72, 0x73, 0x74, 0x75
+]);
+
 // Indoor / Pokecenter (Tileset 1) Tile Classifications
-const POKECENTER_WALKABLE_8x8 = new Set([
-  0x00, 0x01, 0x02, 0x04, 0x05, 0x08, 0x0A, 0x15, 0x16, 0x1A, 0x1B, 0x2B, 0x3A, 0x48, 0x49
+export const POKECENTER_WALKABLE_8x8 = new Set([
+  0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x08, 0x0A, 0x15, 0x16, 0x1A, 0x1B, 0x2B, 0x3A, 0x48, 0x49, 0x7E, 0x7F
 ]);
 
 // House (Tileset 2)
-const HOUSE_WALKABLE_8x8 = new Set([
-  0x00, 0x01, 0x02, 0x05, 0x0A, 0x1B, 0x20, 0x22, 0x23, 0x24, 0x32, 0x34
+export const HOUSE_WALKABLE_8x8 = new Set([
+  0x00, 0x01, 0x02, 0x05, 0x0A, 0x1B, 0x20, 0x22, 0x23, 0x24, 0x32, 0x34, 0x7E, 0x7F
 ]);
 
 // Viridian Forest (Tileset 3)
-const FOREST_WALKABLE_8x8 = new Set([
-  0x00, 0x01, 0x05, 0x0A, 0x0E, 0x0F, 0x1B, 0x20, 0x24, 0x34, 0x35, 0x36, 0x37
+export const FOREST_WALKABLE_8x8 = new Set([
+  0x00, 0x01, 0x05, 0x0A, 0x0E, 0x0F, 0x1B, 0x20, 0x24, 0x34, 0x35, 0x36, 0x37, 0x52, 0x53, 0x54, 0x55, 0x7E, 0x7F
 ]);
 
 // Persistent memory of verified walkable/solid coordinates per map
@@ -129,12 +152,18 @@ export function readRamMapData(mmu: any): LocalMapData | null {
     collisionCache.markWalkable(mapId, playerX, playerY);
 
     // 2. Initialize map collision grid
-    // CRITICAL: Unseen areas default to SOLID (Infinity) to prevent pathfinding through unverified boundaries
+    // Within map boundaries (0..mapWidth, 0..mapHeight), initialize as WALKABLE so the player can navigate open roads,
+    // and let screen vision (wTileMap) and collision cache detect the exact obstacles (trees, walls, cliffs).
+    // Border beyond map boundaries remains SOLID.
     const collisionGrid: TileClassification[][] = [];
     for (let y = 0; y <= mapHeight + 4; y++) {
       const row: TileClassification[] = [];
       for (let x = 0; x <= mapWidth + 4; x++) {
-        row.push(TileClassification.SOLID);
+        if (x <= mapWidth && y <= mapHeight) {
+          row.push(TileClassification.WALKABLE);
+        } else {
+          row.push(TileClassification.SOLID);
+        }
       }
       collisionGrid.push(row);
     }
@@ -257,7 +286,7 @@ export function readRamMapData(mmu: any): LocalMapData | null {
 
 /**
  * Evaluates a 16x16 player step consisting of 4 8x8 BG tiles.
- * All 4 sub-tiles must be passable for the step to be walkable!
+ * Uses explicit solid detection and fallback walkability so city roads and paths are never blocked!
  */
 function evaluate2x2Step(
   tl: number,
@@ -272,6 +301,16 @@ function evaluate2x2Step(
     return TileClassification.WALKABLE;
   }
 
+  // Check if any sub-tile is explicitly strictly SOLID (Trees, cliff walls, fences, roofs, water)
+  if (
+    isTileSolid(tl, tileset) ||
+    isTileSolid(tr, tileset) ||
+    isTileSolid(bl, tileset) ||
+    isTileSolid(br, tileset)
+  ) {
+    return TileClassification.SOLID;
+  }
+
   // Check if any sub-tile is a hop-down ledge
   if (
     OVERWORLD_LEDGE_DOWN_8x8.has(tl) ||
@@ -282,55 +321,44 @@ function evaluate2x2Step(
     return TileClassification.LEDGE_DOWN;
   }
 
-  // Check if all 4 tiles are grass
+  // Check if any sub-tile is tall grass
   if (
     OVERWORLD_GRASS_8x8.has(tl) ||
     OVERWORLD_GRASS_8x8.has(tr) ||
     OVERWORLD_GRASS_8x8.has(bl) ||
     OVERWORLD_GRASS_8x8.has(br)
   ) {
-    // Check that none of the other sub-tiles is a solid tree/wall
-    if (
-      isTilePassable(tl, tileset) &&
-      isTilePassable(tr, tileset) &&
-      isTilePassable(bl, tileset) &&
-      isTilePassable(br, tileset)
-    ) {
-      return TileClassification.GRASS;
-    }
-    return TileClassification.SOLID;
+    return TileClassification.GRASS;
   }
 
-  // Check if ALL 4 tiles are passable road/floor
-  if (
-    isTilePassable(tl, tileset) &&
-    isTilePassable(tr, tileset) &&
-    isTilePassable(bl, tileset) &&
-    isTilePassable(br, tileset)
-  ) {
-    return TileClassification.WALKABLE;
-  }
+  // Otherwise, all clear road, pavement, door mat, or floor
+  return TileClassification.WALKABLE;
+}
 
-  return TileClassification.SOLID;
+/**
+ * Check if an individual 8x8 tile is strictly SOLID
+ */
+function isTileSolid(tileId: number, tileset: number): boolean {
+  if (tileset === 0) {
+    return OVERWORLD_SOLID_8x8.has(tileId);
+  }
+  if (tileset === 1) {
+    return !POKECENTER_WALKABLE_8x8.has(tileId);
+  }
+  if (tileset === 2) {
+    return !HOUSE_WALKABLE_8x8.has(tileId);
+  }
+  if (tileset === 3) {
+    return !FOREST_WALKABLE_8x8.has(tileId);
+  }
+  return false;
 }
 
 /**
  * Check if an individual 8x8 tile is passable
  */
 function isTilePassable(tileId: number, tileset: number): boolean {
-  if (tileset === 0) {
-    return OVERWORLD_WALKABLE_8x8.has(tileId) || OVERWORLD_GRASS_8x8.has(tileId);
-  }
-  if (tileset === 1) {
-    return POKECENTER_WALKABLE_8x8.has(tileId);
-  }
-  if (tileset === 2) {
-    return HOUSE_WALKABLE_8x8.has(tileId);
-  }
-  if (tileset === 3) {
-    return FOREST_WALKABLE_8x8.has(tileId);
-  }
-  return tileId <= 0x05 || tileId === 0x1B;
+  return !isTileSolid(tileId, tileset);
 }
 
 /**
@@ -338,15 +366,9 @@ function isTilePassable(tileId: number, tileset: number): boolean {
  */
 function isBlockSolid(blockId: number, tileset: number): boolean {
   if (tileset === 0) {
-    // Solid trees, mountain walls, roof blocks, water in Overworld
-    const SOLID_OVERWORLD_BLOCKS = new Set([
-      0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-      0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A,
-      0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B,
-      0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-      0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B
-    ]);
-    return SOLID_OVERWORLD_BLOCKS.has(blockId);
+    // Pure solid blocks only (dense trees clump 0x0D, full water 0x14)
+    const STRICT_SOLID_BLOCKS = new Set([0x0D, 0x14]);
+    return STRICT_SOLID_BLOCKS.has(blockId);
   }
   return false;
 }
