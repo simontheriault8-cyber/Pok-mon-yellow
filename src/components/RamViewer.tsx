@@ -182,12 +182,12 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
   });
 
   useEffect(() => {
-    if (!emulator || !emulator.cart) return;
+    if (!emulator) return;
 
     const readRam = () => {
       try {
         const mmu = emulator.mmu;
-        if (!mmu) return;
+        if (!mmu || !emulator.cart) return;
 
         const isFrench = emulator.cart?.title.toUpperCase().includes('FRA') || 
                          emulator.cart?.title.toUpperCase().includes('FRENCH') || 
@@ -249,7 +249,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
       }
     };
 
-    // Immediate first read
+    // Immediate first read & high-rate interval
     readRam();
     const interval = setInterval(readRam, 80);
 
