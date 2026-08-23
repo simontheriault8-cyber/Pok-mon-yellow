@@ -1,11 +1,12 @@
 import { useEffect, useState, useRef } from 'react';
 import { GameBoy } from '../emulator/gameboy';
-import { POKEMON_YELLOW_RAM, resolveAddr } from '../services/pokemonYellowRam';
+import { POKEMON_YELLOW_RAM, resolveAddr, getRamOffset, readPartyStatusFromRAM } from '../services/pokemonYellowRam';
 import { readNavigationState, NavigationRoute, POKEMON_YELLOW_MAPS, WarpInfo } from '../services/worldNavigation';
 import { LocalNavigationEngine, AutoHealProgress, NavLogEntry } from '../services/localNavigation';
+import { readRamMapData, TileClassification, LocalMapData } from '../services/ramMapReader';
 import { 
   Cpu, Sparkles, Compass, MapPin, DoorOpen, ShieldAlert, HeartPulse, 
-  Play, Square, RefreshCw, Terminal, Copy, Check, Trash2, ChevronDown, ChevronUp, Clock 
+  Play, Square, RefreshCw, Terminal, Copy, Check, Trash2, ChevronDown, ChevronUp, Clock, Eye
 } from 'lucide-react';
 import { TrainerBotMode } from '../services/simpleTrainerBot';
 
@@ -24,7 +25,9 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
   const [isHealRunning, setIsHealRunning] = useState<boolean>(false);
   const [navLogs, setNavLogs] = useState<NavLogEntry[]>([]);
   const [showLogs, setShowLogs] = useState<boolean>(true);
+  const [showRadar, setShowRadar] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
+  const [radarData, setRadarData] = useState<LocalMapData | null>(null);
 
   useEffect(() => {
     navEngineRef.current.setEmulator(emulator);
@@ -109,34 +112,21 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     };
   }, [isBotRunning, botStartTime]);
 
-  // Nav / Module 2 Timer
+  // Auto-Heal Live timer
   useEffect(() => {
-    let animationFrameId: number;
-
-    const updateNavTimer = () => {
-      const start = navEngineRef.current.getStartTime();
-      if (isHealRunning && start) {
-        setNavElapsedMs(Date.now() - start);
-        animationFrameId = requestAnimationFrame(updateNavTimer);
-      }
-    };
-
+    let interval: any;
     if (isHealRunning) {
-      animationFrameId = requestAnimationFrame(updateNavTimer);
+      const start = navEngineRef.current.getStartTime() || Date.now();
+      interval = setInterval(() => {
+        setNavElapsedMs(Date.now() - start);
+      }, 100);
+    } else {
+      setNavElapsedMs(0);
     }
-
-    return () => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
-    };
+    return () => clearInterval(interval);
   }, [isHealRunning]);
 
-  const formatTimer = (ms: number) => {
-    const mins = Math.floor(ms / 60000);
-    const secs = Math.floor((ms % 60000) / 1000);
-    const msecs = Math.floor((ms % 1000) / 100);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${msecs}`;
-  };
-
+  // Read full RAM navigation state & 2D radar
   const [navData, setNavData] = useState<{
     currentMapId: number;
     mapName: string;
@@ -144,20 +134,20 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     playerY: number;
     facing: string;
     rawFacing: number;
+    warpCount: number;
+    warps: WarpInfo[];
     tileset: number;
     standingTile: number;
-    warpCount: number;
-    joyIgnore: number;
-    battleType: number;
-    isFrench: boolean;
-    partyCount: number;
-    aliveCount: number;
     mapWidth: number;
     mapHeight: number;
-    warps: WarpInfo[];
-    closestPokecenter: NavigationRoute | null;
+    battleType: number;
+    joyIgnore: number;
     dumpD350: number[];
     dumpD3A0: number[];
+    isFrench: boolean;
+    aliveCount: number;
+    partyCount: number;
+    closestPokecenter: NavigationRoute | null;
   }>({
     currentMapId: 0,
     mapName: 'Chargement...',
@@ -165,137 +155,209 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     playerY: 0,
     facing: 'Inconnu',
     rawFacing: 0,
+    warpCount: 0,
+    warps: [],
     tileset: 0,
     standingTile: 0,
-    warpCount: 0,
-    joyIgnore: 0,
-    battleType: 0,
-    isFrench: false,
-    partyCount: 0,
-    aliveCount: 0,
     mapWidth: 0,
     mapHeight: 0,
-    warps: [],
-    closestPokecenter: null,
+    battleType: 0,
+    joyIgnore: 0,
     dumpD350: [],
     dumpD3A0: [],
+    isFrench: false,
+    aliveCount: 0,
+    partyCount: 0,
+    closestPokecenter: null
   });
 
   useEffect(() => {
     if (!emulator) return;
 
-    const readRam = () => {
+    const interval = setInterval(() => {
+      const mmu = emulator.mmu;
+      if (!mmu) return;
+
       try {
-        const mmu = emulator.mmu;
-        if (!mmu || !emulator.cart) return;
+        const state = readNavigationState(mmu);
+        if (!state) return;
 
-        const isFrench = emulator.cart?.title.toUpperCase().includes('FRA') || 
-                         emulator.cart?.title.toUpperCase().includes('FRENCH') || 
-                         emulator.cart?.rom[0x0147] === 0x46 || false;
+        // Read Live 2D Collision Radar
+        const mapData = readRamMapData(mmu);
+        setRadarData(mapData);
 
-        // Extract Navigation State
-        const nav = readNavigationState(mmu);
+        const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
+        const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
+        const mapIdAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_ID_EN, mmu);
+        const dirAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_DIR_EN, mmu);
+        const warpCountAddr = resolveAddr(POKEMON_YELLOW_RAM.WARP_COUNT_EN, mmu);
+        const tilesetAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_TILESET_EN, mmu);
+        const standingTileAddr = resolveAddr(POKEMON_YELLOW_RAM.TILE_PLAYER_STANDING_EN, mmu);
+        const mapHAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_HEIGHT_EN, mmu);
+        const mapWAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_WIDTH_EN, mmu);
+        const battleTypeAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN, mmu);
+        const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
 
-        // Party health analysis
-        const partyCountAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_COUNT_EN, mmu);
-        const partyCount = mmu.read(partyCountAddr);
-        const validCount = partyCount > 0 && partyCount <= 6 ? partyCount : 0;
-        let aliveCount = 0;
+        const curMapId = mmu.read(mapIdAddr);
+        const pX = mmu.read(xAddr);
+        const pY = mmu.read(yAddr);
+        const rawDir = mmu.read(dirAddr);
+        const wCount = mmu.read(warpCountAddr);
+        const tSet = mmu.read(tilesetAddr);
+        const sTile = mmu.read(standingTileAddr);
+        const mH = mmu.read(mapHAddr);
+        const mW = mmu.read(mapWAddr);
+        const bType = mmu.read(battleTypeAddr);
+        const jIgnore = mmu.read(joyIgnoreAddr);
 
-        for (let i = 0; i < validCount; i++) {
-          const hpAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_HP_EN + i * POKEMON_YELLOW_RAM.PARTY_STRUCT_SIZE, mmu);
-          const curHp = (mmu.read(hpAddr) << 8) | mmu.read(hpAddr + 1);
-          if (curHp > 0) aliveCount++;
-        }
+        let facingStr = 'Inconnu';
+        if (rawDir === 0x00) facingStr = 'Bas ⬇️';
+        else if (rawDir === 0x04) facingStr = 'Haut ⬆️';
+        else if (rawDir === 0x08) facingStr = 'Gauche ⬅️';
+        else if (rawDir === 0x0C) facingStr = 'Droite ➡️';
 
-        // Extract Navigation D350-D37F dump (Maps, Coords, Dimensions)
+        // Dump D350-D37F (Maps/Coords/Dims)
         const dumpD350: number[] = [];
-        for (let i = 0xD350; i <= 0xD37F; i++) {
-          dumpD350.push(mmu.read(i));
+        const baseD350 = resolveAddr(0xD350, mmu);
+        for (let i = 0; i < 48; i++) {
+          dumpD350.push(mmu.read(baseD350 + i));
         }
 
-        // Extract Warps D3A0-D3DF dump (D3AE = WarpCount, D3AF = Warp entries)
+        // Dump D3A0-D3DF (Warps/D3AE)
         const dumpD3A0: number[] = [];
-        for (let i = 0xD3A0; i <= 0xD3DF; i++) {
-          dumpD3A0.push(mmu.read(i));
+        const baseD3A0 = resolveAddr(0xD3A0, mmu);
+        for (let i = 0; i < 48; i++) {
+          dumpD3A0.push(mmu.read(baseD3A0 + i));
         }
 
-        if (nav) {
-          setNavData({
-            currentMapId: nav.currentMapId,
-            mapName: nav.mapName,
-            playerX: nav.playerX,
-            playerY: nav.playerY,
-            facing: nav.facing,
-            rawFacing: nav.rawFacing,
-            tileset: nav.tileset,
-            standingTile: nav.standingTile,
-            warpCount: nav.warpCount,
-            mapWidth: nav.mapWidth,
-            mapHeight: nav.mapHeight,
-            warps: nav.warps,
-            joyIgnore: nav.joyIgnore,
-            battleType: nav.battleType,
-            isFrench,
-            partyCount: validCount,
-            aliveCount,
-            closestPokecenter: nav.closestPokecenter,
-            dumpD350,
-            dumpD3A0,
-          });
-        }
+        const mapName = POKEMON_YELLOW_MAPS[curMapId] || `Map 0x${curMapId.toString(16).toUpperCase()}`;
+
+        const partyStatus = readPartyStatusFromRAM(mmu);
+        const isFrench = getRamOffset(mmu) === 1;
+
+        setNavData({
+          currentMapId: curMapId,
+          mapName,
+          playerX: pX,
+          playerY: pY,
+          facing: facingStr,
+          rawFacing: rawDir,
+          warpCount: wCount,
+          warps: state.warps,
+          tileset: tSet,
+          standingTile: sTile,
+          mapWidth: mW * 2,
+          mapHeight: mH * 2,
+          battleType: bType,
+          joyIgnore: jIgnore,
+          dumpD350,
+          dumpD3A0,
+          isFrench,
+          aliveCount: partyStatus.aliveMons,
+          partyCount: partyStatus.totalMons,
+          closestPokecenter: state.closestPokecenter
+        });
       } catch (err) {
-        console.error('Erreur lecture RAM viewer:', err);
+        // MMU read error safety
       }
-    };
+    }, 150);
 
-    // Immediate first read & high-rate interval
-    readRam();
-    const interval = setInterval(readRam, 80);
-
-    return () => {
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, [emulator]);
 
-  if (!emulator?.cart) return null;
+  const hexFormat = (num: number, len: number = 2) => '0x' + num.toString(16).toUpperCase().padStart(len, '0');
 
-  const hexFormat = (num: number, padding: number = 2) => '0x' + num.toString(16).toUpperCase().padStart(padding, '0');
+  const formatTimer = (ms: number) => {
+    const totalSecs = Math.floor(ms / 1000);
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    const tenths = Math.floor((ms % 1000) / 100);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${tenths}`;
+  };
 
   const getLogBadge = (type: NavLogEntry['type']) => {
     switch (type) {
+      case 'info':
+        return <span className="px-1 py-0.2 rounded bg-sky-950 text-sky-400 border border-sky-800 font-bold text-[8px]">INFO</span>;
       case 'nav':
-        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">CARTE</span>;
+        return <span className="px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-700 font-bold text-[8px]">NAV</span>;
+      case 'step':
+        return <span className="px-1 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800 font-bold text-[8px]">PAS</span>;
       case 'door':
-        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">PORTE</span>;
+        return <span className="px-1 py-0.2 rounded bg-purple-950 text-purple-300 border border-purple-800 font-bold text-[8px]">PORTE</span>;
       case 'nurse':
-        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-pink-500/20 text-pink-300 border border-pink-500/30">JOËLLE</span>;
+        return <span className="px-1 py-0.2 rounded bg-pink-950 text-pink-300 border border-pink-800 font-bold text-[8px]">JOËLLE</span>;
       case 'heal':
-        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">SOIN</span>;
+        return <span className="px-1 py-0.2 rounded bg-emerald-900 text-emerald-100 border border-emerald-500 font-bold text-[8px]">SOIN</span>;
       case 'return':
-        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">RETOUR</span>;
+        return <span className="px-1 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-700 font-bold text-[8px]">RETOUR</span>;
       case 'error':
-        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">ERREUR</span>;
+        return <span className="px-1 py-0.2 rounded bg-rose-950 text-rose-300 border border-rose-800 font-bold text-[8px]">ERREUR</span>;
       case 'stop':
-        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-zinc-500/20 text-zinc-300 border border-zinc-500/30">ARRÊT</span>;
+        return <span className="px-1 py-0.2 rounded bg-zinc-800 text-zinc-300 border border-zinc-600 font-bold text-[8px]">ARRÊT</span>;
       default:
-        return <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">INFO</span>;
+        return null;
+    }
+  };
+
+  const renderRadarCell = (type: TileClassification, relX: number, relY: number) => {
+    const isPlayer = relX === 0 && relY === 0;
+
+    if (isPlayer) {
+      let arrow = '🟢';
+      if (navData.rawFacing === 0x00) arrow = '⬇️';
+      else if (navData.rawFacing === 0x04) arrow = '⬆️';
+      else if (navData.rawFacing === 0x08) arrow = '⬅️';
+      else if (navData.rawFacing === 0x0C) arrow = '➡️';
+      return (
+        <span className="w-5 h-5 flex items-center justify-center bg-emerald-500/40 border border-emerald-400 text-[10px] font-bold rounded shadow-inner" title={`Joueur (${navData.playerX}, ${navData.playerY})`}>
+          {arrow}
+        </span>
+      );
+    }
+
+    switch (type) {
+      case TileClassification.WALKABLE:
+        return (
+          <span className="w-5 h-5 flex items-center justify-center bg-emerald-950/40 border border-emerald-900/30 text-[8px] text-emerald-500 rounded" title="Route / Sol Dégagé">
+            ·
+          </span>
+        );
+      case TileClassification.GRASS:
+        return (
+          <span className="w-5 h-5 flex items-center justify-center bg-green-900/50 border border-green-700/40 text-[9px] rounded" title="Hautes Herbes">
+            🌾
+          </span>
+        );
+      case TileClassification.LEDGE_DOWN:
+        return (
+          <span className="w-5 h-5 flex items-center justify-center bg-amber-950/60 border border-amber-600/50 text-[9px] rounded" title="Rebord Falaise (Saut vers le BAS)">
+            🔻
+          </span>
+        );
+      case TileClassification.SOLID:
+      default:
+        return (
+          <span className="w-5 h-5 flex items-center justify-center bg-rose-950/50 border border-rose-900/40 text-[9px] rounded text-rose-500/70" title="Obstacle Solide (Arbre/Mur/Eau)">
+            🧱
+          </span>
+        );
     }
   };
 
   return (
-    <div className="w-full flex-1 min-h-0 bg-[#0a0a0c] border-t border-zinc-800/50 overflow-hidden font-mono text-[10px] sm:text-[11px] text-emerald-500 shadow-inner p-2 md:p-3 relative">
-      <div className="absolute inset-0 pointer-events-none opacity-[0.02]" 
-        style={{
-          backgroundImage: 'linear-gradient(rgba(16, 185, 129, 0.4) 1px, transparent 1px)',
-          backgroundSize: '100% 3px'
-        }}
-      />
-      <div className="flex items-center gap-2 mb-2 md:mb-3 pb-1 border-b border-emerald-900/50">
-        <Compass className="w-4 h-4 text-emerald-400 animate-pulse" />
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          <h3 className="uppercase tracking-widest font-bold text-emerald-400 text-xs">Navigation & Moniteur RAM Direct</h3>
-          
+    <div className="bg-black/80 rounded-xl p-3 border border-emerald-900/50 font-mono text-[11px] text-emerald-400 backdrop-blur-md shadow-2xl relative overflow-hidden flex flex-col gap-2">
+      {/* Background aesthetic grid overlay */}
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(16,185,129,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.02)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none" />
+
+      {/* Header bar */}
+      <div className="flex items-center justify-between border-b border-emerald-900/60 pb-1.5 z-10">
+        <div className="flex items-center gap-2">
+          <Compass className="w-4 h-4 text-emerald-400 animate-spin-slow" />
+          <span className="font-bold tracking-wider text-emerald-300 uppercase text-xs">
+            Navigation & Moniteur RAM Direct
+          </span>
+
           {/* Module 2 Auto-Heal Live Timer */}
           {isHealRunning && (
             <span className="font-mono text-emerald-300 font-bold bg-emerald-950/70 px-2 py-0.5 rounded text-[11px] border border-emerald-500/50 flex items-center gap-1 animate-pulse">
@@ -404,6 +466,46 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           <span className="font-bold text-emerald-300">
             {navData.joyIgnore === 0 ? '🟢 Contrôles Libres' : '🔴 Texte/Anim (Verrouillé)'}
           </span>
+        </div>
+
+        {/* 2D Collision Radar & RAM Vision */}
+        <div className="col-span-2 flex flex-col bg-emerald-950/25 p-2 rounded-lg border border-emerald-800/40">
+          <div className="flex items-center justify-between pb-1 border-b border-emerald-900/40 text-[10px]">
+            <span className="text-emerald-400 font-bold flex items-center gap-1">
+              <Eye className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Radar & Grille de Collisions 2D (Vision RAM 9x9)</span>
+            </span>
+            <div className="flex items-center gap-2 text-[9px] text-emerald-500">
+              <span>🟩 Route</span>
+              <span>🌾 Herbe</span>
+              <span>🔻 Falaise</span>
+              <span>🧱 Obstacle</span>
+              <button
+                onClick={() => setShowRadar(!showRadar)}
+                className="p-0.5 rounded hover:bg-emerald-900/40 text-emerald-400 cursor-pointer ml-1"
+                title={showRadar ? 'Masquer le radar' : 'Afficher le radar'}
+              >
+                {showRadar ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          {showRadar && radarData && radarData.screenTileGrid && (
+            <div className="flex flex-col items-center justify-center pt-2 pb-1">
+              <div className="grid grid-cols-9 gap-0.5 bg-black/60 p-1.5 rounded-md border border-emerald-900/50 shadow-inner">
+                {radarData.screenTileGrid.map((row, rIdx) =>
+                  row.map((cell, cIdx) => (
+                    <div key={`${rIdx}-${cIdx}`}>
+                      {renderRadarCell(cell, cIdx - 4, rIdx - 4)}
+                    </div>
+                  ))
+                )}
+              </div>
+              <span className="text-[9px] text-emerald-500/80 mt-1">
+                Centre : Joueur à ({navData.playerX}, {navData.playerY}) | Champ de vision direct 9x9 pas
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Detected Warps on Current Map */}

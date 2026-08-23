@@ -1,5 +1,8 @@
 // Universal A* (A-Star) & BFS Pathfinding Engine for Pokemon Gen 1
 // Computes optimal route between (startX, startY) and (targetX, targetY) using live RAM collision matrix.
+// Properly respects One-Way Hop-Down Ledges (TileClassification.LEDGE_DOWN)!
+
+import { TileClassification } from './ramMapReader';
 
 export type StepDirection = 'up' | 'down' | 'left' | 'right';
 
@@ -29,11 +32,14 @@ interface Node {
 export class AStarPathfinder {
   /**
    * Calculates the shortest and safest path on the collision grid from (startX, startY) to (targetX, targetY).
-   * If the target tile itself is an interactive obstacle (like Nurse Joy behind the counter or a solid door header),
-   * it targets the closest walkable adjacent tile.
+   * Directional handling:
+   * - LEDGE_DOWN is passable ONLY when moving DOWN from above (y -> y + 1)
+   * - SOLID is impassable
+   * - GRASS has cost 2 (slight penalty to favor clean roads)
+   * - WALKABLE has cost 1
    */
   public static findPath(
-    collisionGrid: number[][],
+    collisionGrid: TileClassification[][],
     startX: number,
     startY: number,
     targetX: number,
@@ -44,12 +50,12 @@ export class AStarPathfinder {
     if (height === 0) return { found: false, steps: [], totalCost: 0, targetCoords: { x: targetX, y: targetY } };
     const width = collisionGrid[0].length;
 
-    // Check bounds
+    // Bounds check
     if (startX < 0 || startX >= width || startY < 0 || startY >= height) {
       return { found: false, steps: [], totalCost: 0, targetCoords: { x: targetX, y: targetY } };
     }
 
-    // Check if target is already reached
+    // Already at target
     if (startX === targetX && startY === targetY) {
       return { found: true, steps: [], totalCost: 0, targetCoords: { x: targetX, y: targetY } };
     }
@@ -62,10 +68,10 @@ export class AStarPathfinder {
       allowAdjacentTarget &&
       effectiveTargetY < height &&
       effectiveTargetX < width &&
-      collisionGrid[effectiveTargetY][effectiveTargetX] === Infinity
+      collisionGrid[effectiveTargetY][effectiveTargetX] === TileClassification.SOLID
     ) {
       const adjacentTiles = [
-        { x: targetX, y: targetY + 1 }, // South of target (e.g. (3, 3) facing (3, 2))
+        { x: targetX, y: targetY + 1 }, // South
         { x: targetX, y: targetY - 1 }, // North
         { x: targetX - 1, y: targetY }, // West
         { x: targetX + 1, y: targetY }, // East
@@ -80,7 +86,7 @@ export class AStarPathfinder {
           adj.y < height &&
           adj.x >= 0 &&
           adj.x < width &&
-          collisionGrid[adj.y][adj.x] !== Infinity
+          collisionGrid[adj.y][adj.x] !== TileClassification.SOLID
         ) {
           const d = Math.abs(adj.x - startX) + Math.abs(adj.y - startY);
           if (d < minAdjDist) {
@@ -142,7 +148,7 @@ export class AStarPathfinder {
 
       closedSet.add(currentKey);
 
-      // Track closest node in case full path is unreachable
+      // Track closest node
       if (current.h < closestDistance) {
         closestDistance = current.h;
         closestNodeToTarget = current;
@@ -157,11 +163,26 @@ export class AStarPathfinder {
         if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
         if (closedSet.has(nKey)) continue;
 
-        const tileCost = collisionGrid[ny][nx];
-        if (tileCost === Infinity) continue; // Blocked by wall/tree/obstacle
+        const tileType = collisionGrid[ny][nx];
 
-        // Standard movement base cost is 1, plus any tile penalty (e.g. high grass = +1)
-        const tentativeG = current.g + 1 + tileCost;
+        // 1. Solid obstacle -> impassable
+        if (tileType === TileClassification.SOLID) continue;
+
+        // 2. Hop-down Ledge -> Directional Constraint!
+        if (tileType === TileClassification.LEDGE_DOWN) {
+          // Can ONLY jump down if moving DOWN from above (dy > 0)
+          if (n.dir !== 'down') {
+            continue; // Blocked in UP, LEFT, RIGHT directions
+          }
+        }
+
+        // Base step cost
+        let stepCost = 1;
+        if (tileType === TileClassification.GRASS) {
+          stepCost = 2; // Slight penalty for tall grass
+        }
+
+        const tentativeG = current.g + stepCost;
         const previousG = gScore.get(nKey);
 
         if (previousG === undefined || tentativeG < previousG) {
@@ -188,7 +209,7 @@ export class AStarPathfinder {
     }
 
     // If exact target unreachable, return path to closest reachable position
-    if (closestNodeToTarget !== startNode) {
+    if (closestNodeToTarget !== startNode && closestNodeToTarget.h < startNode.h) {
       return AStarPathfinder.reconstructPath(closestNodeToTarget, {
         x: closestNodeToTarget.x,
         y: closestNodeToTarget.y,
@@ -199,7 +220,6 @@ export class AStarPathfinder {
   }
 
   private static heuristic(x1: number, y1: number, x2: number, y2: number): number {
-    // Manhattan distance
     return Math.abs(x1 - x2) + Math.abs(y1 - y2);
   }
 

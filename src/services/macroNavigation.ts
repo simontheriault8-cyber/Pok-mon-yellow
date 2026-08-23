@@ -6,9 +6,9 @@ export type Direction = 'up' | 'down' | 'left' | 'right';
 export interface ZoneBoundary {
   fromMapId: number;
   toMapId: number;
-  fromCoords: { x: number; y: number }; // Tile to walk to before crossing
+  fromCoords: { x: number; y: number }; // Exact tile to reach before crossing
   crossingDir: Direction;               // Direction step to trigger map transition
-  toCoordsExpected: { x: number; y: number }; // Expected arrival coordinates on next map
+  toCoordsExpected: { x: number; y: number }; // Arrival coordinates on destination map
   description: string;
 }
 
@@ -24,13 +24,13 @@ export interface PokecenterData {
   name: string;
   outdoorMapId: number;
   indoorMapId: number;
-  doorCoords: { x: number; y: number }; // Exact door tile
+  doorCoords: { x: number; y: number };  // Exact door tile
   standCoords: { x: number; y: number }; // Tile (x, y+1) where player stands facing North
 }
 
 // Complete Kanto Pokecenter Registry
 export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
-  // Viridian City Pokecenter
+  // Viridian City Pokecenter (0x01)
   0x01: {
     name: 'Centre PKMN Jadielle',
     outdoorMapId: 0x01,
@@ -38,7 +38,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 23, y: 25 },
     standCoords: { x: 23, y: 26 },
   },
-  // Pewter City Pokecenter
+  // Pewter City Pokecenter (0x02)
   0x02: {
     name: 'Centre PKMN Argenta',
     outdoorMapId: 0x02,
@@ -46,7 +46,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 13, y: 25 },
     standCoords: { x: 13, y: 26 },
   },
-  // Cerulean City Pokecenter
+  // Cerulean City Pokecenter (0x03)
   0x03: {
     name: 'Centre PKMN Azuria',
     outdoorMapId: 0x03,
@@ -54,7 +54,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 19, y: 17 },
     standCoords: { x: 19, y: 18 },
   },
-  // Vermilion City Pokecenter
+  // Vermilion City Pokecenter (0x05)
   0x05: {
     name: 'Centre PKMN Carmin sur Mer',
     outdoorMapId: 0x05,
@@ -62,7 +62,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 11, y: 3 },
     standCoords: { x: 11, y: 4 },
   },
-  // Celadon City Pokecenter
+  // Celadon City Pokecenter (0x06)
   0x06: {
     name: 'Centre PKMN Céladopole',
     outdoorMapId: 0x06,
@@ -70,7 +70,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 41, y: 9 },
     standCoords: { x: 41, y: 10 },
   },
-  // Lavender Town Pokecenter
+  // Lavender Town Pokecenter (0x04)
   0x04: {
     name: 'Centre PKMN Lavanville',
     outdoorMapId: 0x04,
@@ -78,7 +78,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 5, y: 5 },
     standCoords: { x: 5, y: 6 },
   },
-  // Fuchsia City Pokecenter
+  // Fuchsia City Pokecenter (0x07)
   0x07: {
     name: 'Centre PKMN Parmanie',
     outdoorMapId: 0x07,
@@ -86,7 +86,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 19, y: 27 },
     standCoords: { x: 19, y: 28 },
   },
-  // Saffron City Pokecenter
+  // Saffron City Pokecenter (0x0A)
   0x0A: {
     name: 'Centre PKMN Safrania',
     outdoorMapId: 0x0A,
@@ -94,7 +94,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 9, y: 29 },
     standCoords: { x: 9, y: 30 },
   },
-  // Cinnabar Island Pokecenter
+  // Cinnabar Island Pokecenter (0x08)
   0x08: {
     name: 'Centre PKMN Cramois\'Île',
     outdoorMapId: 0x08,
@@ -102,7 +102,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 11, y: 11 },
     standCoords: { x: 11, y: 12 },
   },
-  // Route 4 Pokecenter (Mt. Moon)
+  // Route 4 Pokecenter (Mt. Moon) (0x0F)
   0x0F: {
     name: 'Centre PKMN Route 4 (Mont Sélénite)',
     outdoorMapId: 0x0F,
@@ -110,7 +110,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
     doorCoords: { x: 11, y: 5 },
     standCoords: { x: 11, y: 6 },
   },
-  // Indigo Plateau Pokecenter
+  // Indigo Plateau Pokecenter (0x09)
   0x09: {
     name: 'Centre PKMN Plateau Indigo',
     outdoorMapId: 0x09,
@@ -120,7 +120,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   },
 };
 
-// Global Inter-Zone Boundaries graph
+// Global Inter-Zone Boundaries graph with verified coordinates
 export const ZONE_BOUNDARIES: ZoneBoundary[] = [
   // 1. Route 1 (0x0C) <-> Viridian City (0x01)
   {
@@ -141,20 +141,22 @@ export const ZONE_BOUNDARIES: ZoneBoundary[] = [
   },
 
   // 2. Route 22 (0x21) <-> Viridian City (0x01)
+  // On Route 22, the East road into Viridian City is at Y = 13 (X: 39).
+  // In Viridian City, the West road into Route 22 is at X = 0, Y = 13.
   {
     fromMapId: 0x21,
     toMapId: 0x01,
-    fromCoords: { x: 39, y: 9 },
+    fromCoords: { x: 39, y: 13 },
     crossingDir: 'right',
-    toCoordsExpected: { x: 0, y: 9 },
+    toCoordsExpected: { x: 0, y: 13 },
     description: 'Route 22 vers Jadielle (Frontière Est)',
   },
   {
     fromMapId: 0x01,
     toMapId: 0x21,
-    fromCoords: { x: 0, y: 9 },
+    fromCoords: { x: 0, y: 13 },
     crossingDir: 'left',
-    toCoordsExpected: { x: 39, y: 9 },
+    toCoordsExpected: { x: 39, y: 13 },
     description: 'Jadielle vers Route 22 (Frontière Ouest)',
   },
 
@@ -235,7 +237,6 @@ export const ZONE_BOUNDARIES: ZoneBoundary[] = [
  * Find closest Pokecenter based on current mapId
  */
 export function getClosestPokecenterForMap(currentMapId: number): PokecenterData {
-  // Direct matching or nearest town
   if (POKECENTERS_REGISTRY[currentMapId]) {
     return POKECENTERS_REGISTRY[currentMapId];
   }
@@ -250,12 +251,11 @@ export function getClosestPokecenterForMap(currentMapId: number): PokecenterData
     return POKECENTERS_REGISTRY[0x02];
   }
 
-  // Default fallback: Viridian City
   return POKECENTERS_REGISTRY[0x01];
 }
 
 /**
- * Macro Graph Search (BFS): Computes the list of Zone Boundaries to traverse from originMapId to targetOutdoorMapId.
+ * Macro Graph Search (BFS): Computes the sequence of Zone Boundaries to traverse.
  */
 export function planMacroRoute(originMapId: number, targetOutdoorMapId?: number): MacroRoutePlan | null {
   const targetPokecenter = targetOutdoorMapId ? POKECENTERS_REGISTRY[targetOutdoorMapId] || getClosestPokecenterForMap(originMapId) : getClosestPokecenterForMap(originMapId);
@@ -294,7 +294,6 @@ export function planMacroRoute(originMapId: number, targetOutdoorMapId?: number)
       };
     }
 
-    // Find all outgoing boundaries from current map
     const outgoing = ZONE_BOUNDARIES.filter((b) => b.fromMapId === current.mapId);
     for (const b of outgoing) {
       if (!visited.has(b.toMapId)) {
@@ -307,7 +306,6 @@ export function planMacroRoute(originMapId: number, targetOutdoorMapId?: number)
     }
   }
 
-  // Fallback: If no macro path found in graph, return direct attempt
   return {
     originMapId,
     targetPokecenterOutdoorMapId: targetMap,

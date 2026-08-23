@@ -10,8 +10,8 @@
 import { GameBoy } from '../emulator/gameboy';
 import { POKEMON_YELLOW_RAM, resolveAddr } from './pokemonYellowRam';
 import { readNavigationState, POKEMON_YELLOW_MAPS } from './worldNavigation';
-import { readRamMapData, collisionCache } from './ramMapReader';
-import { AStarPathfinder } from './pathfinder';
+import { readRamMapData, collisionCache, TileClassification } from './ramMapReader';
+import { AStarPathfinder, StepDirection } from './pathfinder';
 import { planMacroRoute, Direction, PokecenterData, getClosestPokecenterForMap } from './macroNavigation';
 
 export type AutoHealStatus =
@@ -237,7 +237,7 @@ export class LocalNavigationEngine {
         this.addLog('nav', `🚪 Franchissement de frontière [${boundary.crossingDir.toUpperCase()}]...`);
         await this.stepAndRecord(boundary.crossingDir, true);
         await this.stepAndRecord(boundary.crossingDir, true);
-        await this.wait(600); // Wait for map transition
+        await this.wait(700); // Wait for map transition
       }
 
       // Step 4: Now in Target Pokecenter Town -> Navigate to Door Tile facing North
@@ -274,14 +274,14 @@ export class LocalNavigationEngine {
       this.addLog('door', `🚪 Entrée dans le ${pokecenter.name}...`);
       this.notifyProgress(`Entrée dans le ${pokecenter.name}...`, pokecenter.doorCoords, null, 0);
       await this.stepDirection('up');
-      await this.wait(700); // Wait for indoor warp transition
+      await this.wait(800); // Wait for indoor warp transition
 
       // Verify indoor map reached
       nav = readNavigationState(mmu)!;
       if (nav.currentMapId !== pokecenter.indoorMapId) {
         // Retry step UP if warp didn't trigger
         await this.stepDirection('up');
-        await this.wait(700);
+        await this.wait(800);
         nav = readNavigationState(mmu)!;
       }
 
@@ -318,7 +318,7 @@ export class LocalNavigationEngine {
       // Step DOWN on mat to warp out
       this.addLog('door', '🚪 Franchissement de la sortie vers l\'extérieur...');
       await this.stepDirection('down');
-      await this.wait(700); // Warp out transition
+      await this.wait(800); // Warp out transition
 
       // Step 9: Replay Reverse Step History Stack to Return to Training Spot
       if (returnToOrigin && this.originTrainingCoords && this.originTrainingMapId !== null) {
@@ -366,7 +366,7 @@ export class LocalNavigationEngine {
     const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
     const mapIdAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_ID_EN, mmu);
 
-    let maxSteps = 140;
+    let maxSteps = 160;
     let stuckCount = 0;
 
     while (maxSteps > 0 && this.isRunning) {
@@ -401,11 +401,10 @@ export class LocalNavigationEngine {
       );
 
       if (!pathResult.found || pathResult.steps.length === 0) {
-        this.addLog('step', `⚠️ Pas de chemin A* direct vers (${targetX}, ${targetY}), ajustement...`, { x: curX, y: curY });
-        const dx = targetX - curX;
-        const dy = targetY - curY;
-        const fallbackDir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
-        await this.stepAndRecord(fallbackDir, recordForReturn);
+        // Find best passable neighbor avoiding solid walls
+        const safeDir = this.findBestPassableNeighbor(mapData.collisionGrid, curX, curY, targetX, targetY);
+        this.addLog('step', `⚠️ Recalcul A* vers (${targetX}, ${targetY}), ajustement de cap [${safeDir.toUpperCase()}]...`, { x: curX, y: curY });
+        await this.stepAndRecord(safeDir, recordForReturn);
         await this.wait(90);
         maxSteps--;
         continue;
@@ -424,16 +423,16 @@ export class LocalNavigationEngine {
       const prevY = curY;
 
       await this.stepAndRecord(nextStep.direction, recordForReturn);
-      await this.wait(70);
+      await this.wait(75);
 
       // Verify position update in RAM
       const newX = mmu.read(xAddr);
       const newY = mmu.read(yAddr);
 
       if (newX === prevX && newY === prevY) {
-        // Blocked by dynamic obstacle (e.g. NPC)
+        // Blocked by dynamic obstacle (e.g. NPC or unseen collision)
         stuckCount++;
-        this.addLog('step', `⚠️ Obstacle imprévu en (${nextStep.x}, ${nextStep.y}) ! Exécution de la manœuvre de contournement...`, { x: newX, y: newY });
+        this.addLog('step', `⚠️ Obstacle en (${nextStep.x}, ${nextStep.y}) ! Contournement...`, { x: newX, y: newY });
         
         // Mark tile as solid in RAM collision cache
         collisionCache.markSolid(curMap, nextStep.x, nextStep.y);
@@ -451,7 +450,44 @@ export class LocalNavigationEngine {
 
     const finalX = mmu.read(xAddr);
     const finalY = mmu.read(yAddr);
-    return finalX === targetX && finalY === targetY;
+    return Math.abs(finalX - targetX) + Math.abs(finalY - targetY) <= 1;
+  }
+
+  /**
+   * Find safe passable neighbor when A* needs local recovery
+   */
+  private findBestPassableNeighbor(
+    grid: TileClassification[][],
+    curX: number,
+    curY: number,
+    targetX: number,
+    targetY: number
+  ): Direction {
+    const candidates: { dir: Direction; x: number; y: number; cost: number }[] = [
+      { dir: 'down', x: curX, y: curY + 1, cost: 0 },
+      { dir: 'right', x: curX + 1, y: curY, cost: 0 },
+      { dir: 'left', x: curX - 1, y: curY, cost: 0 },
+      { dir: 'up', x: curX, y: curY - 1, cost: 0 },
+    ];
+
+    let bestDir: Direction = 'down';
+    let bestDist = Infinity;
+
+    for (const c of candidates) {
+      if (c.y >= 0 && c.y < grid.length && c.x >= 0 && c.x < grid[0].length) {
+        const type = grid[c.y][c.x];
+        // Must be walkable or ledge down
+        if (type !== TileClassification.SOLID) {
+          const dist = Math.abs(c.x - targetX) + Math.abs(c.y - targetY);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestDir = c.dir;
+          }
+        }
+      }
+    }
+
+    return bestDir;
   }
 
   /**
@@ -501,29 +537,61 @@ export class LocalNavigationEngine {
     };
 
     const totalSteps = this.stepHistoryStack.length;
-    let stepNum = 0;
+    let stepIndex = 0;
 
-    // Pop moves in reverse order and execute opposite direction
     while (this.stepHistoryStack.length > 0 && this.isRunning) {
       const forwardDir = this.stepHistoryStack.pop()!;
       const reverseDir = oppositeDir[forwardDir];
-      stepNum++;
+      stepIndex++;
 
       this.notifyProgress(
-        `Trajet retour inversé (${stepNum}/${totalSteps} pas)...`,
+        `Trajet retour inversé : pas ${stepIndex}/${totalSteps} [${reverseDir.toUpperCase()}]`,
         this.originTrainingCoords,
         null,
-        totalSteps - stepNum
+        totalSteps - stepIndex
       );
 
       await this.stepDirection(reverseDir);
-      await this.wait(70);
+      await this.wait(75);
     }
   }
 
   /**
-   * Step in a direction and optionally record the move to the return history stack.
+   * Automate Nurse Joy Dialogue Sequence
    */
+  private async interactWithNurse(mmu: any): Promise<void> {
+    const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
+    let attempts = 20;
+
+    // Trigger dialogue with A button
+    await this.tapKey('a', 100);
+    await this.wait(400);
+
+    while (attempts > 0 && this.isRunning) {
+      const joyIgnore = mmu.read(joyIgnoreAddr);
+
+      // Press A or B to advance dialogue
+      await this.tapKey('a', 80);
+      await this.wait(250);
+
+      // Check if text prompt is waiting for input
+      if (joyIgnore === 0) {
+        await this.tapKey('b', 80);
+        await this.wait(200);
+      }
+
+      attempts--;
+    }
+
+    // Extra safety presses to ensure dialogue is fully closed
+    await this.tapKey('b', 80);
+    await this.wait(200);
+    await this.tapKey('b', 80);
+    await this.wait(200);
+  }
+
+  // --- Low-Level Joypad & RAM Step Helpers ---
+
   private async stepAndRecord(dir: Direction, record: boolean): Promise<void> {
     if (record) {
       this.stepHistoryStack.push(dir);
@@ -531,66 +599,35 @@ export class LocalNavigationEngine {
     await this.stepDirection(dir);
   }
 
-  /**
-   * Standardized Nurse Joy dialogue interaction.
-   */
-  private async interactWithNurse(mmu: any): Promise<void> {
-    const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
-
-    // Press [A] to initiate dialogue
-    await this.tapKey('a', 90);
-    await this.wait(200);
-
-    let attempts = 0;
-    this.addLog('nurse', '🎵 Attente du jingle de guérison des Pokéballs...');
-
-    // Loop through dialogue
-    while (attempts < 60 && this.isRunning) {
-      const joyIgnore = mmu.read(joyIgnoreAddr);
-
-      // Advance dialogue with [A]
-      await this.tapKey('a', 60);
-      await this.wait(120);
-
-      // If text box closed and joypad is unlocked, heal is complete
-      if (attempts > 15 && joyIgnore === 0) {
-        // Clear closing prompt with [B]
-        await this.tapKey('b', 60);
-        await this.wait(100);
-        this.addLog('nurse', '🩺 Dialogue avec Joëlle terminé avec succès.');
-        break;
-      }
-
-      attempts++;
-    }
-  }
-
   private async stepDirection(dir: Direction): Promise<void> {
-    // 190ms press triggers a clean 1-tile grid step in Gen 1
-    await this.tapKey(dir, 190);
+    if (!this.emulator) return;
+    // Game Boy requires holding directional key for ~110ms to register full tile movement
+    this.emulator.setJoypad(dir, true);
+    await this.wait(110);
+    if (this.emulator) {
+      this.emulator.setJoypad(dir, false);
+    }
+    await this.wait(60);
   }
 
-  private async tapKey(key: 'left' | 'right' | 'up' | 'down' | 'a' | 'b' | 'start' | 'select', durationMs: number = 60): Promise<void> {
+  private async tapKey(key: 'up' | 'down' | 'left' | 'right' | 'a' | 'b' | 'start' | 'select', durationMs: number = 80): Promise<void> {
     if (!this.emulator) return;
     this.emulator.setJoypad(key, true);
-    await new Promise((res) => setTimeout(res, durationMs));
+    await this.wait(durationMs);
     if (this.emulator) {
       this.emulator.setJoypad(key, false);
     }
-    await new Promise((res) => setTimeout(res, 30));
-  }
-
-  private async wait(ms: number): Promise<void> {
-    await new Promise((res) => setTimeout(res, ms));
   }
 
   private releaseAllKeys(): void {
     if (!this.emulator) return;
-    const keys: ('left' | 'right' | 'up' | 'down' | 'a' | 'b' | 'start' | 'select')[] = [
-      'left', 'right', 'up', 'down', 'a', 'b', 'start', 'select'
+    const keys: ('up' | 'down' | 'left' | 'right' | 'a' | 'b' | 'start' | 'select')[] = [
+      'up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'
     ];
-    for (const k of keys) {
-      this.emulator.setJoypad(k, false);
-    }
+    keys.forEach((k) => this.emulator?.setJoypad(k, false));
+  }
+
+  private wait(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

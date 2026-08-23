@@ -2,6 +2,7 @@
 // This file centralizes memory addresses for Yellow / Yellow 151 (English and French / European offsets).
 
 export function getRamOffset(mmu: any): number {
+  if (!mmu) return 0;
   // Signature check for Party Count (Standard EN is 0xD163)
   // Check offsets from -5 to +5 to handle ROM hacks (like Yellow 151) and translations
   for (let offset = -5; offset <= 5; offset++) {
@@ -42,6 +43,56 @@ export function resolveAddr(enAddr: number, mmu: any): number {
     return enAddr;
   }
   return enAddr + getRamOffset(mmu);
+}
+
+export interface PartyStatusData {
+  isValid: boolean;
+  totalMons: number;
+  aliveMons: number;
+  faintedMons: number;
+  monsHp: { slot: number; curHp: number; maxHp: number }[];
+}
+
+export function readPartyStatusFromRAM(mmu: any): PartyStatusData {
+  if (!mmu) {
+    return { isValid: false, totalMons: 1, aliveMons: 1, faintedMons: 0, monsHp: [] };
+  }
+
+  const pCountAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_COUNT_EN, mmu);
+  const pHpBase = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_HP_EN, mmu);
+  const pMaxHpBase = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_MAX_HP_EN, mmu);
+
+  const rawCount = mmu.read(pCountAddr);
+  const monsHp: { slot: number; curHp: number; maxHp: number }[] = [];
+  let aliveMons = 0;
+  let validSlots = 0;
+
+  for (let i = 0; i < 6; i++) {
+    const offset = i * POKEMON_YELLOW_RAM.PARTY_STRUCT_SIZE;
+    const curHp = (mmu.read(pHpBase + offset) << 8) | mmu.read(pHpBase + offset + 1);
+    const maxHp = (mmu.read(pMaxHpBase + offset) << 8) | mmu.read(pMaxHpBase + offset + 1);
+
+    if (maxHp >= 5 && maxHp <= 999 && curHp <= maxHp + 100) {
+      validSlots++;
+      monsHp.push({ slot: i + 1, curHp, maxHp });
+      if (curHp > 0) {
+        aliveMons++;
+      }
+    }
+  }
+
+  if (validSlots > 0) {
+    const totalMons = (rawCount >= 1 && rawCount <= 6) ? Math.max(validSlots, rawCount) : validSlots;
+    return {
+      isValid: true,
+      totalMons,
+      aliveMons,
+      faintedMons: Math.max(0, totalMons - aliveMons),
+      monsHp,
+    };
+  }
+
+  return { isValid: false, totalMons: 1, aliveMons: 1, faintedMons: 0, monsHp: [] };
 }
 
 export const POKEMON_YELLOW_RAM = {
