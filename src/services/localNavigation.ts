@@ -353,7 +353,7 @@ export class LocalNavigationEngine {
 
   /**
    * Micro-Navigation Engine using live 2D RAM Collision Matrix + A* Pathfinding.
-   * Includes Dynamic Obstacle Avoidance (Bayonet maneuver).
+   * Strictly follows the computed A* path along walkable radar tiles without detour/evasion maneuvers.
    */
   public async microNavigateWithRAM(
     mmu: any,
@@ -366,13 +366,18 @@ export class LocalNavigationEngine {
     const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
     const mapIdAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_ID_EN, mmu);
 
-    let maxSteps = 160;
-    let stuckCount = 0;
+    const startingMapId = mmu.read(mapIdAddr);
+    let maxSteps = 180;
 
     while (maxSteps > 0 && this.isRunning) {
       const curX = mmu.read(xAddr);
       const curY = mmu.read(yAddr);
       const curMap = mmu.read(mapIdAddr);
+
+      // If map changed (boundary crossed or warp entered), mission completed for this map
+      if (curMap !== startingMapId) {
+        return true;
+      }
 
       // Check if target coordinates reached
       if (curX === targetX && curY === targetY) {
@@ -401,11 +406,17 @@ export class LocalNavigationEngine {
       );
 
       if (!pathResult.found || pathResult.steps.length === 0) {
-        // Find best passable neighbor avoiding solid walls
+        // Destination might be direct neighbor
+        if (dist <= 1) {
+          const directDir: Direction = curX < targetX ? 'right' : curX > targetX ? 'left' : curY < targetY ? 'down' : 'up';
+          await this.stepAndRecord(directDir, recordForReturn);
+          return true;
+        }
+
+        // Direct neighbor step if A* is slightly offset
         const safeDir = this.findBestPassableNeighbor(mapData.collisionGrid, curX, curY, targetX, targetY);
-        this.addLog('step', `⚠️ Recalcul A* vers (${targetX}, ${targetY}), ajustement de cap [${safeDir.toUpperCase()}]...`, { x: curX, y: curY });
+        this.addLog('step', `📍 Cap direct vers (${targetX}, ${targetY}) : [${safeDir.toUpperCase()}]`, { x: curX, y: curY });
         await this.stepAndRecord(safeDir, recordForReturn);
-        await this.wait(90);
         maxSteps--;
         continue;
       }
@@ -419,30 +430,12 @@ export class LocalNavigationEngine {
 
       // 3. Take next step from A* path
       const nextStep = pathResult.steps[0];
-      const prevX = curX;
-      const prevY = curY;
-
       await this.stepAndRecord(nextStep.direction, recordForReturn);
-      await this.wait(75);
 
-      // Verify position update in RAM
-      const newX = mmu.read(xAddr);
-      const newY = mmu.read(yAddr);
-
-      if (newX === prevX && newY === prevY) {
-        // Blocked by dynamic obstacle (e.g. NPC or unseen collision)
-        stuckCount++;
-        this.addLog('step', `⚠️ Obstacle en (${nextStep.x}, ${nextStep.y}) ! Contournement...`, { x: newX, y: newY });
-        
-        // Mark tile as solid in RAM collision cache
-        collisionCache.markSolid(curMap, nextStep.x, nextStep.y);
-
-        // Execute Bayonet Avoidance Maneuver (2 steps perpendicular -> 2 forward -> 2 back)
-        await this.executeBayonetManeuver(mmu, nextStep.direction, recordForReturn);
-        stuckCount = 0;
-      } else {
-        stuckCount = 0;
-        collisionCache.markWalkable(curMap, newX, newY);
+      // Verify if map transitioned during step
+      const afterMap = mmu.read(mapIdAddr);
+      if (afterMap !== startingMapId) {
+        return true;
       }
 
       maxSteps--;
@@ -450,7 +443,8 @@ export class LocalNavigationEngine {
 
     const finalX = mmu.read(xAddr);
     const finalY = mmu.read(yAddr);
-    return Math.abs(finalX - targetX) + Math.abs(finalY - targetY) <= 1;
+    const finalMap = mmu.read(mapIdAddr);
+    return finalMap !== startingMapId || (Math.abs(finalX - targetX) + Math.abs(finalY - targetY) <= 1);
   }
 
   /**
@@ -488,41 +482,6 @@ export class LocalNavigationEngine {
     }
 
     return bestDir;
-  }
-
-  /**
-   * Bayonet Obstacle Avoidance Maneuver:
-   * 1. Step 2 tiles perpendicular (e.g., Left if moving Up/Down)
-   * 2. Step 2 tiles in the main direction (Forward)
-   * 3. Step 2 tiles in opposite perpendicular direction to rejoin path
-   */
-  private async executeBayonetManeuver(
-    mmu: any,
-    mainDir: Direction,
-    recordForReturn: boolean
-  ): Promise<void> {
-    const perp1: Direction = mainDir === 'up' || mainDir === 'down' ? 'left' : 'up';
-    const perp2: Direction = mainDir === 'up' || mainDir === 'down' ? 'right' : 'down';
-
-    this.addLog('step', `🔄 Manœuvre en baïonnette : 2 pas [${perp1.toUpperCase()}], 2 pas [${mainDir.toUpperCase()}], 2 pas [${perp2.toUpperCase()}]`);
-
-    // 1. Perpendicular shift 1 (2 steps)
-    await this.stepAndRecord(perp1, recordForReturn);
-    await this.wait(60);
-    await this.stepAndRecord(perp1, recordForReturn);
-    await this.wait(60);
-
-    // 2. Main forward shift (2 steps)
-    await this.stepAndRecord(mainDir, recordForReturn);
-    await this.wait(60);
-    await this.stepAndRecord(mainDir, recordForReturn);
-    await this.wait(60);
-
-    // 3. Perpendicular return shift (2 steps)
-    await this.stepAndRecord(perp2, recordForReturn);
-    await this.wait(60);
-    await this.stepAndRecord(perp2, recordForReturn);
-    await this.wait(60);
   }
 
   /**
@@ -601,13 +560,113 @@ export class LocalNavigationEngine {
 
   private async stepDirection(dir: Direction): Promise<void> {
     if (!this.emulator) return;
-    // Game Boy requires holding directional key for ~110ms to register full tile movement
+    // Game Boy requires holding directional key for ~130ms to register full tile movement
     this.emulator.setJoypad(dir, true);
-    await this.wait(110);
+    await this.wait(130);
     if (this.emulator) {
       this.emulator.setJoypad(dir, false);
     }
-    await this.wait(60);
+    // Wait for step animation to finish
+    await this.wait(120);
+
+    // Module 2 Feature: Check if a wild battle was triggered during/after this step
+    if (this.emulator && this.emulator.mmu && this.isRunning) {
+      await this.handleBattleAutoFlee(this.emulator.mmu);
+    }
+  }
+
+  /**
+   * Battle Auto-Flee Handler (Module 2):
+   * When an encounter is triggered during navigation, the bot repeatedly attempts to FLEE (FUITE / RUN).
+   * Once successfully escaped and returned to Overworld, it flushes text and resumes its route.
+   */
+  private async handleBattleAutoFlee(mmu: any): Promise<void> {
+    const battleValEn = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN);
+    const battleValFr = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_FR);
+    let inBattle = (battleValEn > 0 && battleValEn <= 2) || (battleValFr > 0 && battleValFr <= 2);
+
+    if (!inBattle) return;
+
+    this.addLog('nav', '⚔️ Combat aléatoire détecté pendant le trajet ! Tentative de FUITE en boucle...');
+    this.notifyProgress('⚔️ Combat déclenché ! Tentative de FUITE...', null, null, 0);
+
+    let attempts = 0;
+    const maxAttempts = 150; // Safety limit
+    const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
+    const topMenuYAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu);
+    const topMenuXAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu);
+
+    while (this.isRunning && attempts < maxAttempts) {
+      const bEn = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN);
+      const bFr = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_FR);
+      inBattle = (bEn > 0 && bEn <= 2) || (bFr > 0 && bFr <= 2);
+
+      // If battle has ended (0xD057 == 0), escape was successful!
+      if (!inBattle) {
+        this.addLog('nav', '🏃💨 Fuite réussie avec succès ! Reprise immédiate du trajet.');
+        // Wait for screen fade / joypad ready
+        let fadeCount = 0;
+        while (mmu.read(joyIgnoreAddr) > 0 && fadeCount < 30) {
+          await this.tapKey('b', 60);
+          await this.wait(80);
+          fadeCount++;
+        }
+        // Extra B presses to clear any remaining text boxes
+        for (let i = 0; i < 4; i++) {
+          await this.tapKey('b', 60);
+          await this.wait(100);
+        }
+        return;
+      }
+
+      const joyIgnore = mmu.read(joyIgnoreAddr);
+
+      // If game is busy animating or fading, press B/A to skip text
+      if (joyIgnore > 0) {
+        await this.tapKey('b', 60);
+        await this.wait(100);
+        attempts++;
+        continue;
+      }
+
+      // Check if 2x2 Battle Menu (FIGHT / PKMN / ITEM / RUN) is ready
+      // In Gen 1, RUN (FUITE) is at Bottom-Right (Down then Right)
+      const topY = mmu.read(topMenuYAddr);
+      const topX = mmu.read(topMenuXAddr);
+
+      // If we accidentally opened attack submenu (X=4 or 5), press B to cancel back
+      if (topX === 4 || topX === 5) {
+        await this.tapKey('b', 60);
+        await this.wait(100);
+      }
+
+      // Navigate to RUN button (Down + Right in 2x2 menu)
+      // 1. Move cursor to bottom row
+      await this.tapKey('down', 60);
+      await this.wait(70);
+
+      // 2. Move cursor to right column (RUN)
+      await this.tapKey('right', 60);
+      await this.wait(70);
+
+      // 3. Press A to trigger FLEE
+      await this.tapKey('a', 80);
+      await this.wait(200);
+
+      // 4. Press B and A rapidly to clear "Got away safely!" / "Can't escape!" messages
+      for (let k = 0; k < 3; k++) {
+        await this.tapKey('b', 60);
+        await this.wait(100);
+        await this.tapKey('a', 60);
+        await this.wait(100);
+      }
+
+      attempts++;
+    }
+
+    // Safety fallback flush
+    await this.tapKey('b', 80);
+    await this.wait(150);
   }
 
   private async tapKey(key: 'up' | 'down' | 'left' | 'right' | 'a' | 'b' | 'start' | 'select', durationMs: number = 80): Promise<void> {

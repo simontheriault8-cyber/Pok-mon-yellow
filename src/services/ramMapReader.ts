@@ -5,9 +5,10 @@
 import { resolveAddr, POKEMON_YELLOW_RAM } from './pokemonYellowRam';
 
 export enum TileClassification {
-  WALKABLE = 0,       // Dirt, floor, carpet, door, open road (Cost 1)
+  WALKABLE = 0,       // Dirt, floor, carpet, open road (Cost 1)
   GRASS = 1,          // High grass / flowers (Cost 2)
   LEDGE_DOWN = 2,     // Hop-down ledge: passable ONLY when moving DOWN from above
+  DOOR = 3,           // Building entrance / Warp threshold (Cost 1)
   SOLID = Infinity,   // Tree, cliff, fence, water, wall, roof, counter, NPC
 }
 
@@ -21,42 +22,52 @@ export interface LocalMapData {
   standingTile: number;
   collisionGrid: TileClassification[][]; // grid[y][x]
   screenTileGrid: TileClassification[][]; // 9x9 step radar around player
+  screenTileHexGrid?: string[][]; // 9x9 hex values "[tl,tr,bl,br]"
 }
 
 // Overworld (Tileset 0) Tile Classifications in Gen 1
-// Walkable: Dirt paths, light roads, paved city streets, sidewalks, door thresholds, flowers
+// Walkable: Dirt paths, light roads, sand/speckled paths, path edges, paved city streets, sidewalks, open spaces
 export const OVERWORLD_WALKABLE_8x8 = new Set([
-  0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-  0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-  0x10, 0x11, 0x12, 0x13, 0x1B, 0x20, 0x21, 0x22, 0x23,
-  0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x3C, 0x3D, 0x3E, 0x3F,
-  0x48, 0x49, 0x50, 0x51, 0x7E, 0x7F
+  0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+  0x1B, 0x20, 0x21, 0x22, 0x23,
+  0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31,
+  0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+  0x48, 0x49, 0x7E, 0x7F
 ]);
 
-// Grass tiles in Overworld
+// Grass tiles in Overworld (Tall wild encounter grass)
 export const OVERWORLD_GRASS_8x8 = new Set([
-  0x52, 0x53, 0x54, 0x55
+  0x52
 ]);
 
-// Hop-down Ledges (passable downwards only)
-export const OVERWORLD_LEDGE_DOWN_8x8 = new Set([
-  0x36, 0x37, 0x38, 0x39
+// Hop-down Ledges in Overworld (jumpable ridges: 0x1D, 0x27, 0x36, 0x37)
+export const OVERWORLD_LEDGE_DOWN_8x8 = new Set<number>([
+  0x1D, 0x27, 0x36, 0x37
 ]);
 
-// Known strictly SOLID tiles in Overworld (Trees, mountain walls, fences, roofs, water)
+// Door & entrance tiles in Overworld
+export const OVERWORLD_DOOR_8x8 = new Set<number>([
+  0x1B, 0x5E
+]);
+
+// Known strictly SOLID tiles in Overworld (Trees, mountain walls, fences, bollard posts, building facades, roofs, water)
 export const OVERWORLD_SOLID_8x8 = new Set([
-  // Trees (standard 4-quadrant tree)
-  0x32, 0x33, 0x34, 0x35,
-  // Fences & signposts
+  // Trees (standard 4-quadrant tree & small single pine trees & tree tops)
+  0x1C, 0x1D, 0x1E, 0x28, 0x29, 0x2A, 0x2B, 0x32, 0x33, 0x34, 0x35, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x4C, 0x4D, 0x4E, 0x4F,
+  // Fences, signposts & bollard posts (00000000 barrier posts)
   0x18, 0x19, 0x1A, 0x24, 0x2A, 0x2B,
+  0x50, 0x51, 0x53, 0x54, 0x55,
   // Mountain walls & cliff edges
-  0x15, 0x16, 0x17, 0x25, 0x26, 0x27, 0x3A,
+  0x15, 0x16, 0x17, 0x25, 0x26,
   // Water / River / Ocean
   0x14, 0x1F,
+  // Building windows, walls, signs (POKé / MART / SHOP) & facades (Pokecenter, Mart, Houses)
+  0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+  0x10, 0x11, 0x12, 0x13,
   // Building roofs & solid walls
-  0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
+  0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5F,
   0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F,
-  0x70, 0x71, 0x72, 0x73, 0x74, 0x75
+  0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D
 ]);
 
 // Indoor / Pokecenter (Tileset 1) Tile Classifications
@@ -148,6 +159,19 @@ export function readRamMapData(mmu: any): LocalMapData | null {
       screenTiles.push(row);
     }
 
+    // 1b. Read live warps on current map from RAM
+    const warpCountAddr = resolveAddr(POKEMON_YELLOW_RAM.WARP_COUNT_EN, mmu);
+    const warpBaseAddr = resolveAddr(POKEMON_YELLOW_RAM.WARP_ENTRIES_BASE_EN, mmu);
+    const warpCount = mmu.read(warpCountAddr);
+    const warpsSet = new Set<string>();
+    if (warpCount > 0 && warpCount <= 32) {
+      for (let i = 0; i < warpCount; i++) {
+        const wy = mmu.read(warpBaseAddr + i * 4);
+        const wx = mmu.read(warpBaseAddr + i * 4 + 1);
+        warpsSet.add(`${wx},${wy}`);
+      }
+    }
+
     // Mark current player standing position as 100% walkable
     collisionCache.markWalkable(mapId, playerX, playerY);
 
@@ -159,7 +183,9 @@ export function readRamMapData(mmu: any): LocalMapData | null {
     for (let y = 0; y <= mapHeight + 4; y++) {
       const row: TileClassification[] = [];
       for (let x = 0; x <= mapWidth + 4; x++) {
-        if (x <= mapWidth && y <= mapHeight) {
+        if (warpsSet.has(`${x},${y}`)) {
+          row.push(TileClassification.DOOR);
+        } else if (x <= mapWidth && y <= mapHeight) {
           row.push(TileClassification.WALKABLE);
         } else {
           row.push(TileClassification.SOLID);
@@ -189,7 +215,11 @@ export function readRamMapData(mmu: any): LocalMapData | null {
             const wx = stepX + dx;
             const wy = stepY + dy;
             if (wy <= mapHeight && wx <= mapWidth) {
-              collisionGrid[wy][wx] = classification;
+              if (warpsSet.has(`${wx},${wy}`)) {
+                collisionGrid[wy][wx] = TileClassification.DOOR;
+              } else {
+                collisionGrid[wy][wx] = classification;
+              }
             }
           }
         }
@@ -200,9 +230,11 @@ export function readRamMapData(mmu: any): LocalMapData | null {
     // Game Boy screen is 20x18 tiles. Player center 16x16 sprite is at columns [8, 9] and rows [8, 9].
     // Each 16x16 step corresponds to 2x2 8x8 BG tiles.
     const screenRadarGrid: TileClassification[][] = [];
+    const screenRadarHexGrid: string[][] = [];
 
     for (let stepOffsetY = -4; stepOffsetY <= 4; stepOffsetY++) {
       const radarRow: TileClassification[] = [];
+      const hexRow: string[] = [];
       for (let stepOffsetX = -4; stepOffsetX <= 4; stepOffsetX++) {
         const targetWorldX = playerX + stepOffsetX;
         const targetWorldY = playerY + stepOffsetY;
@@ -211,6 +243,10 @@ export function readRamMapData(mmu: any): LocalMapData | null {
         const screenRow = 8 + stepOffsetY * 2;
 
         let classification = TileClassification.SOLID;
+        let hexStr = '??';
+
+        // Check if this world coord is a known door / warp entry
+        const isDoorCoordinate = warpsSet.has(`${targetWorldX},${targetWorldY}`);
 
         // Check if all 4 8x8 sub-tiles are on screen
         if (
@@ -224,14 +260,20 @@ export function readRamMapData(mmu: any): LocalMapData | null {
           const tBottomLeft = screenTiles[screenRow + 1][screenCol];
           const tBottomRight = screenTiles[screenRow + 1][screenCol + 1];
 
-          classification = evaluate2x2Step(
-            tTopLeft,
-            tTopRight,
-            tBottomLeft,
-            tBottomRight,
-            tileset,
-            standingTile
-          );
+          hexStr = `0x${tTopLeft.toString(16).padStart(2, '0')}, 0x${tTopRight.toString(16).padStart(2, '0')}, 0x${tBottomLeft.toString(16).padStart(2, '0')}, 0x${tBottomRight.toString(16).padStart(2, '0')}`;
+
+          if (isDoorCoordinate) {
+            classification = TileClassification.DOOR;
+          } else {
+            classification = evaluate2x2Step(
+              tTopLeft,
+              tTopRight,
+              tBottomLeft,
+              tBottomRight,
+              tileset,
+              standingTile
+            );
+          }
 
           // Update main collision grid with high-precision screen vision
           if (
@@ -242,11 +284,15 @@ export function readRamMapData(mmu: any): LocalMapData | null {
           ) {
             collisionGrid[targetWorldY][targetWorldX] = classification;
           }
+        } else if (isDoorCoordinate) {
+          classification = TileClassification.DOOR;
         }
 
         radarRow.push(classification);
+        hexRow.push(hexStr);
       }
       screenRadarGrid.push(radarRow);
+      screenRadarHexGrid.push(hexRow);
     }
 
     // 5. Apply dynamic collision cache overlays (learned obstacles / walked paths)
@@ -277,6 +323,7 @@ export function readRamMapData(mmu: any): LocalMapData | null {
       standingTile,
       collisionGrid,
       screenTileGrid: screenRadarGrid,
+      screenTileHexGrid: screenRadarHexGrid,
     };
   } catch (err) {
     console.error('Erreur lecture RAM Map:', err);

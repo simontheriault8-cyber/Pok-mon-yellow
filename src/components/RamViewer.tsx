@@ -300,8 +300,10 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     }
   };
 
-  const renderRadarCell = (type: TileClassification, relX: number, relY: number) => {
+  const renderRadarCell = (type: TileClassification, relX: number, relY: number, hexCode?: string) => {
     const isPlayer = relX === 0 && relY === 0;
+    const cellWorldX = navData.playerX + relX;
+    const cellWorldY = navData.playerY + relY;
 
     if (isPlayer) {
       let arrow = '🟢';
@@ -310,35 +312,43 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
       else if (navData.rawFacing === 0x08) arrow = '⬅️';
       else if (navData.rawFacing === 0x0C) arrow = '➡️';
       return (
-        <span className="w-5 h-5 flex items-center justify-center bg-emerald-500/40 border border-emerald-400 text-[10px] font-bold rounded shadow-inner" title={`Joueur (${navData.playerX}, ${navData.playerY})`}>
+        <span className="w-5 h-5 flex items-center justify-center bg-emerald-500/40 border border-emerald-400 text-[10px] font-bold rounded shadow-inner" title={`Joueur (${navData.playerX}, ${navData.playerY}) | Standing: 0x${navData.standingTile.toString(16)}`}>
           {arrow}
         </span>
       );
     }
 
+    const titleStr = `(${cellWorldX}, ${cellWorldY}) [Rel ${relX > 0 ? '+' : ''}${relX}, ${relY > 0 ? '+' : ''}${relY}] : ${hexCode || 'N/A'}`;
+
     switch (type) {
       case TileClassification.WALKABLE:
         return (
-          <span className="w-5 h-5 flex items-center justify-center bg-emerald-950/40 border border-emerald-900/30 text-[8px] text-emerald-500 rounded" title="Route / Sol Dégagé">
+          <span className="w-5 h-5 flex items-center justify-center bg-emerald-950/40 border border-emerald-900/30 text-[8px] text-emerald-500 rounded" title={`Route dégagée : ${titleStr}`}>
             ·
           </span>
         );
       case TileClassification.GRASS:
         return (
-          <span className="w-5 h-5 flex items-center justify-center bg-green-900/50 border border-green-700/40 text-[9px] rounded" title="Hautes Herbes">
+          <span className="w-5 h-5 flex items-center justify-center bg-green-900/50 border border-green-700/40 text-[9px] rounded" title={`Hautes Herbes : ${titleStr}`}>
             🌾
           </span>
         );
       case TileClassification.LEDGE_DOWN:
         return (
-          <span className="w-5 h-5 flex items-center justify-center bg-amber-950/60 border border-amber-600/50 text-[9px] rounded" title="Rebord Falaise (Saut vers le BAS)">
+          <span className="w-5 h-5 flex items-center justify-center bg-amber-950/60 border border-amber-600/50 text-[9px] rounded" title={`Falaise (Saut Bas) : ${titleStr}`}>
             🔻
+          </span>
+        );
+      case TileClassification.DOOR:
+        return (
+          <span className="w-5 h-5 flex items-center justify-center bg-cyan-950/80 border border-cyan-400 text-[10px] rounded shadow-sm animate-pulse" title={`Porte / Entrée de bâtiment : ${titleStr}`}>
+            🚪
           </span>
         );
       case TileClassification.SOLID:
       default:
         return (
-          <span className="w-5 h-5 flex items-center justify-center bg-rose-950/50 border border-rose-900/40 text-[9px] rounded text-rose-500/70" title="Obstacle Solide (Arbre/Mur/Eau)">
+          <span className="w-5 h-5 flex items-center justify-center bg-rose-950/50 border border-rose-900/40 text-[9px] rounded text-rose-500/70" title={`Obstacle (Solide) : ${titleStr}`}>
             🧱
           </span>
         );
@@ -475,10 +485,11 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
               <Eye className="w-3.5 h-3.5 text-emerald-400" />
               <span>Radar & Grille de Collisions 2D (Vision RAM 9x9)</span>
             </span>
-            <div className="flex items-center gap-2 text-[9px] text-emerald-500">
+            <div className="flex items-center gap-1.5 text-[9px] text-emerald-500 flex-wrap justify-end">
               <span>🟩 Route</span>
               <span>🌾 Herbe</span>
               <span>🔻 Falaise</span>
+              <span className="text-cyan-400 font-semibold">🚪 Porte</span>
               <span>🧱 Obstacle</span>
               <button
                 onClick={() => setShowRadar(!showRadar)}
@@ -496,7 +507,12 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
                 {radarData.screenTileGrid.map((row, rIdx) =>
                   row.map((cell, cIdx) => (
                     <div key={`${rIdx}-${cIdx}`}>
-                      {renderRadarCell(cell, cIdx - 4, rIdx - 4)}
+                      {renderRadarCell(
+                        cell,
+                        cIdx - 4,
+                        rIdx - 4,
+                        radarData.screenTileHexGrid?.[rIdx]?.[cIdx]
+                      )}
                     </div>
                   ))
                 )}
@@ -664,6 +680,12 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
             <strong className="text-emerald-500">D3A0-D3DF (Warps/D3AE):</strong>{' '}
             {navData.dumpD3A0.map((b) => b.toString(16).padStart(2, '0')).join(' ')}
           </div>
+          {radarData && (
+            <div className="text-[9px] leading-tight text-emerald-500/80 break-all">
+              <strong className="text-emerald-400">Tuiles Écran Autour Joueur (wTileMap C440):</strong>{' '}
+              {radarData.screenTileGrid ? '9x9 chargé' : 'N/A'} (standing: {hexFormat(navData.standingTile)})
+            </div>
+          )}
         </div>
 
       </div>
