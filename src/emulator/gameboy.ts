@@ -18,8 +18,10 @@ export class GameBoy {
 
   // Frame timing
   public readonly CYCLES_PER_FRAME = 70224;
+  public readonly FRAME_DURATION_MS = 1000 / 59.7275; // 16.743 ms per Game Boy frame
   private animFrameId: number | null = null;
   private lastFrameTimestamp: number = 0;
+  private frameAccumulator: number = 0;
 
   // Turbo button auto-fire tracker
   private turboAInterval: number = 0;
@@ -72,7 +74,8 @@ export class GameBoy {
     this.isPaused = false;
     this.apu.initAudioContext();
     this.lastFrameTimestamp = performance.now();
-    this.loop();
+    this.frameAccumulator = 0;
+    this.animFrameId = requestAnimationFrame(this.loop);
   }
 
   public pause(): void {
@@ -88,12 +91,14 @@ export class GameBoy {
     this.isPaused = false;
     this.apu.initAudioContext();
     this.lastFrameTimestamp = performance.now();
-    this.loop();
+    this.frameAccumulator = 0;
+    this.animFrameId = requestAnimationFrame(this.loop);
   }
 
   public stop(): void {
     this.isRunning = false;
     this.isPaused = false;
+    this.frameAccumulator = 0;
     if (this.animFrameId) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
@@ -172,12 +177,40 @@ export class GameBoy {
     }
   }
 
-  private loop = (): void => {
+  private loop = (timestamp: number = performance.now()): void => {
     if (!this.isRunning || this.isPaused) return;
 
-    // Execute multiple frames for fast-forward (1x, 2x, 4x, etc.)
-    const iterations = Math.min(8, Math.max(1, Math.floor(this.speedMultiplier)));
-    for (let i = 0; i < iterations; i++) {
+    if (!this.lastFrameTimestamp) {
+      this.lastFrameTimestamp = timestamp;
+    }
+
+    let delta = timestamp - this.lastFrameTimestamp;
+    this.lastFrameTimestamp = timestamp;
+
+    // Clamp huge delta spikes (e.g. background tab or lag hitch) to max 100ms (prevents spiral of death)
+    if (delta > 100) delta = 100;
+    if (delta < 0) delta = 0;
+
+    this.frameAccumulator += delta * this.speedMultiplier;
+
+    // Step frames based on accumulated real time
+    let framesToRun = Math.floor(this.frameAccumulator / this.FRAME_DURATION_MS);
+    
+    // Safety cap: Never run more than 8 frames in a single animation frame callback
+    if (framesToRun > 8) {
+      framesToRun = 8;
+      this.frameAccumulator = 0;
+    } else {
+      this.frameAccumulator -= framesToRun * this.FRAME_DURATION_MS;
+    }
+
+    // Always run at least 1 frame if speedMultiplier >= 1 and accumulator has progressed
+    if (framesToRun === 0 && delta >= this.FRAME_DURATION_MS * 0.75) {
+      framesToRun = 1;
+      this.frameAccumulator = Math.max(0, this.frameAccumulator - this.FRAME_DURATION_MS);
+    }
+
+    for (let i = 0; i < framesToRun; i++) {
       this.stepFrame();
     }
 

@@ -1,12 +1,12 @@
-import { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { GameBoy } from '../emulator/gameboy';
 import { POKEMON_YELLOW_RAM, resolveAddr, getRamOffset, readPartyStatusFromRAM } from '../services/pokemonYellowRam';
 import { readNavigationState, NavigationRoute, POKEMON_YELLOW_MAPS, WarpInfo } from '../services/worldNavigation';
 import { LocalNavigationEngine, AutoHealProgress, NavLogEntry } from '../services/localNavigation';
 import { readRamMapData, TileClassification, LocalMapData } from '../services/ramMapReader';
 import { 
-  Cpu, Sparkles, Compass, MapPin, DoorOpen, ShieldAlert, HeartPulse, 
-  Play, Square, RefreshCw, Terminal, Copy, Check, Trash2, ChevronDown, ChevronUp, Clock, Eye
+  Compass, MapPin, DoorOpen, HeartPulse, 
+  Square, RefreshCw, Terminal, Copy, Check, Trash2, ChevronDown, ChevronUp, Clock, Eye, Sparkles
 } from 'lucide-react';
 import { TrainerBotMode } from '../services/simpleTrainerBot';
 
@@ -17,17 +17,182 @@ interface RamViewerProps {
   botMode?: TrainerBotMode;
 }
 
-export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: RamViewerProps) {
-  const [elapsedMs, setElapsedMs] = useState<number>(0);
-  const [navElapsedMs, setNavElapsedMs] = useState<number>(0);
+// ----------------------------------------------------
+// ISOLATED ULTRA-LIGHTWEIGHT LIVE TIMER COMPONENT
+// Updates only its own small text node, preventing full-tree React re-renders!
+// ----------------------------------------------------
+const LiveTimer = React.memo(function LiveTimer({
+  startTime,
+  isRunning,
+  prefix = ''
+}: {
+  startTime?: number | null;
+  isRunning?: boolean;
+  prefix?: string;
+}) {
+  const [display, setDisplay] = useState<string>('00:00.0');
+
+  useEffect(() => {
+    if (!isRunning || !startTime) {
+      setDisplay('00:00.0');
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const ms = Date.now() - startTime;
+      const totalSecs = Math.floor(ms / 1000);
+      const mins = Math.floor(totalSecs / 60);
+      const secs = totalSecs % 60;
+      const tenths = Math.floor((ms % 1000) / 100);
+      setDisplay(`${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${tenths}`);
+    }, 250);
+
+    return () => clearInterval(interval);
+  }, [isRunning, startTime]);
+
+  if (!isRunning || !startTime) return null;
+
+  return (
+    <span>
+      {prefix}{display}
+    </span>
+  );
+});
+
+// ----------------------------------------------------
+// ISOLATED MEMOIZED 2D RADAR GRID COMPONENT
+// ----------------------------------------------------
+interface RadarGridProps {
+  radarData: LocalMapData | null;
+  playerX: number;
+  playerY: number;
+  rawFacing: number;
+  standingTile: number;
+}
+
+const RadarGrid = React.memo(function RadarGrid({
+  radarData,
+  playerX,
+  playerY,
+  rawFacing,
+  standingTile
+}: RadarGridProps) {
+  if (!radarData || !radarData.screenTileGrid) return null;
+
+  const renderRadarCell = (type: TileClassification, relX: number, relY: number, hexCode?: string) => {
+    const isPlayer = relX === 0 && relY === 0;
+    const cellWorldX = playerX + relX;
+    const cellWorldY = playerY + relY;
+
+    if (isPlayer) {
+      let arrow = '🟢';
+      if (rawFacing === 0x00) arrow = '⬇️';
+      else if (rawFacing === 0x04) arrow = '⬆️';
+      else if (rawFacing === 0x08) arrow = '⬅️';
+      else if (rawFacing === 0x0C) arrow = '➡️';
+      return (
+        <span
+          className="w-5 h-5 flex items-center justify-center bg-emerald-500/40 border border-emerald-400 text-[10px] font-bold rounded shadow-inner"
+          title={`Joueur (${playerX}, ${playerY}) | Standing: 0x${standingTile.toString(16)}`}
+        >
+          {arrow}
+        </span>
+      );
+    }
+
+    const titleStr = `(${cellWorldX}, ${cellWorldY}) [Rel ${relX > 0 ? '+' : ''}${relX}, ${relY > 0 ? '+' : ''}${relY}] : ${hexCode || 'N/A'}`;
+
+    switch (type) {
+      case TileClassification.WALKABLE:
+        return (
+          <span
+            className="w-5 h-5 flex items-center justify-center bg-emerald-950/40 border border-emerald-900/30 text-[8px] text-emerald-500 rounded"
+            title={`Route dégagée : ${titleStr}`}
+          >
+            ·
+          </span>
+        );
+      case TileClassification.GRASS:
+        return (
+          <span
+            className="w-5 h-5 flex items-center justify-center bg-green-900/50 border border-green-700/40 text-[9px] rounded"
+            title={`Hautes Herbes : ${titleStr}`}
+          >
+            🌾
+          </span>
+        );
+      case TileClassification.LEDGE_DOWN:
+        return (
+          <span
+            className="w-5 h-5 flex items-center justify-center bg-amber-950/60 border border-amber-600/50 text-[9px] rounded"
+            title={`Falaise (Saut Bas) : ${titleStr}`}
+          >
+            🔻
+          </span>
+        );
+      case TileClassification.DOOR:
+        return (
+          <span
+            className="w-5 h-5 flex items-center justify-center bg-cyan-950/80 border border-cyan-400 text-[10px] rounded shadow-sm animate-pulse"
+            title={`Porte / Entrée de bâtiment : ${titleStr}`}
+          >
+            🚪
+          </span>
+        );
+      case TileClassification.SOLID:
+      default:
+        return (
+          <span
+            className="w-5 h-5 flex items-center justify-center bg-rose-950/50 border border-rose-900/40 text-[9px] rounded text-rose-500/70"
+            title={`Obstacle (Solide) : ${titleStr}`}
+          >
+            🧱
+          </span>
+        );
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center pt-2 pb-1">
+      <div className="grid grid-cols-9 gap-0.5 bg-black/60 p-1.5 rounded-md border border-emerald-900/50 shadow-inner">
+        {radarData.screenTileGrid.map((row, rIdx) =>
+          row.map((cell, cIdx) => (
+            <div key={`${rIdx}-${cIdx}`}>
+              {renderRadarCell(
+                cell,
+                cIdx - 4,
+                rIdx - 4,
+                radarData.screenTileHexGrid?.[rIdx]?.[cIdx]
+              )}
+            </div>
+          ))
+        )}
+      </div>
+      <span className="text-[9px] text-emerald-500/80 mt-1">
+        Centre : Joueur à ({playerX}, {playerY}) | Champ de vision direct 9x9 pas
+      </span>
+    </div>
+  );
+});
+
+export const RamViewer = React.memo(function RamViewer({
+  emulator,
+  isBotRunning,
+  botStartTime,
+  botMode
+}: RamViewerProps) {
   const navEngineRef = useRef<LocalNavigationEngine>(new LocalNavigationEngine());
   const [healProgress, setHealProgress] = useState<AutoHealProgress | null>(null);
   const [isHealRunning, setIsHealRunning] = useState<boolean>(false);
+  const [healStartTime, setHealStartTime] = useState<number | null>(null);
   const [navLogs, setNavLogs] = useState<NavLogEntry[]>([]);
   const [showLogs, setShowLogs] = useState<boolean>(true);
   const [showRadar, setShowRadar] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
   const [radarData, setRadarData] = useState<LocalMapData | null>(null);
+
+  // Cache key to prevent redundant heavy recalculations
+  const lastStateKeyRef = useRef<string>('');
 
   useEffect(() => {
     navEngineRef.current.setEmulator(emulator);
@@ -35,6 +200,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
       setHealProgress(progress);
       if (progress.status === 'completed' || progress.status === 'error' || progress.status === 'idle') {
         setIsHealRunning(false);
+        setHealStartTime(null);
       } else {
         setIsHealRunning(true);
       }
@@ -49,13 +215,15 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     if (isHealRunning) {
       navEngineRef.current.stop();
       setIsHealRunning(false);
+      setHealStartTime(null);
     } else {
       setIsHealRunning(true);
+      setHealStartTime(Date.now());
       await navEngineRef.current.executeAutoHealSequence(true);
     }
   };
 
-  const handleCopyLogs = async () => {
+  const handleCopyLogs = useCallback(async () => {
     if (navLogs.length === 0) return;
     const formatted = [
       '========================================',
@@ -84,47 +252,11 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     } catch (e) {
       console.error('Erreur copie presse-papier:', e);
     }
-  };
+  }, [navLogs, isHealRunning, healProgress]);
 
-  const handleClearLogs = () => {
+  const handleClearLogs = useCallback(() => {
     navEngineRef.current.clearLogs();
-  };
-
-  // Bot timer
-  useEffect(() => {
-    let animationFrameId: number;
-
-    const updateTimer = () => {
-      if (isBotRunning && botStartTime) {
-        setElapsedMs(Date.now() - botStartTime);
-        animationFrameId = requestAnimationFrame(updateTimer);
-      }
-    };
-
-    if (isBotRunning && botStartTime) {
-      animationFrameId = requestAnimationFrame(updateTimer);
-    } else {
-      setElapsedMs(0);
-    }
-
-    return () => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
-    };
-  }, [isBotRunning, botStartTime]);
-
-  // Auto-Heal Live timer
-  useEffect(() => {
-    let interval: any;
-    if (isHealRunning) {
-      const start = navEngineRef.current.getStartTime() || Date.now();
-      interval = setInterval(() => {
-        setNavElapsedMs(Date.now() - start);
-      }, 100);
-    } else {
-      setNavElapsedMs(0);
-    }
-    return () => clearInterval(interval);
-  }, [isHealRunning]);
+  }, []);
 
   // Read full RAM navigation state & 2D radar
   const [navData, setNavData] = useState<{
@@ -174,18 +306,12 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
   useEffect(() => {
     if (!emulator) return;
 
+    // Throttled RAM poll (300ms) with state caching
     const interval = setInterval(() => {
       const mmu = emulator.mmu;
       if (!mmu) return;
 
       try {
-        const state = readNavigationState(mmu);
-        if (!state) return;
-
-        // Read Live 2D Collision Radar
-        const mapData = readRamMapData(mmu);
-        setRadarData(mapData);
-
         const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
         const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
         const mapIdAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_ID_EN, mmu);
@@ -203,12 +329,28 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
         const pY = mmu.read(yAddr);
         const rawDir = mmu.read(dirAddr);
         const wCount = mmu.read(warpCountAddr);
+        const bType = mmu.read(battleTypeAddr);
+        const jIgnore = mmu.read(joyIgnoreAddr);
+
+        const stateKey = `${curMapId}_${pX}_${pY}_${rawDir}_${wCount}_${bType}_${jIgnore}`;
+
+        // Read Live 2D Collision Radar
+        const mapData = readRamMapData(mmu);
+        setRadarData(mapData);
+
+        if (stateKey === lastStateKeyRef.current) {
+          // Player state didn't change, avoid re-running route calculations
+          return;
+        }
+        lastStateKeyRef.current = stateKey;
+
+        const state = readNavigationState(mmu);
+        if (!state) return;
+
         const tSet = mmu.read(tilesetAddr);
         const sTile = mmu.read(standingTileAddr);
         const mH = mmu.read(mapHAddr);
         const mW = mmu.read(mapWAddr);
-        const bType = mmu.read(battleTypeAddr);
-        const jIgnore = mmu.read(joyIgnoreAddr);
 
         let facingStr = 'Inconnu';
         if (rawDir === 0x00) facingStr = 'Bas ⬇️';
@@ -231,7 +373,6 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
         }
 
         const mapName = POKEMON_YELLOW_MAPS[curMapId] || `Map 0x${curMapId.toString(16).toUpperCase()}`;
-
         const partyStatus = readPartyStatusFromRAM(mmu);
         const isFrench = getRamOffset(mmu) === 1;
 
@@ -260,20 +401,12 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
       } catch (err) {
         // MMU read error safety
       }
-    }, 150);
+    }, 300);
 
     return () => clearInterval(interval);
   }, [emulator]);
 
   const hexFormat = (num: number, len: number = 2) => '0x' + num.toString(16).toUpperCase().padStart(len, '0');
-
-  const formatTimer = (ms: number) => {
-    const totalSecs = Math.floor(ms / 1000);
-    const mins = Math.floor(totalSecs / 60);
-    const secs = totalSecs % 60;
-    const tenths = Math.floor((ms % 1000) / 100);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${tenths}`;
-  };
 
   const getLogBadge = (type: NavLogEntry['type']) => {
     switch (type) {
@@ -300,61 +433,6 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
     }
   };
 
-  const renderRadarCell = (type: TileClassification, relX: number, relY: number, hexCode?: string) => {
-    const isPlayer = relX === 0 && relY === 0;
-    const cellWorldX = navData.playerX + relX;
-    const cellWorldY = navData.playerY + relY;
-
-    if (isPlayer) {
-      let arrow = '🟢';
-      if (navData.rawFacing === 0x00) arrow = '⬇️';
-      else if (navData.rawFacing === 0x04) arrow = '⬆️';
-      else if (navData.rawFacing === 0x08) arrow = '⬅️';
-      else if (navData.rawFacing === 0x0C) arrow = '➡️';
-      return (
-        <span className="w-5 h-5 flex items-center justify-center bg-emerald-500/40 border border-emerald-400 text-[10px] font-bold rounded shadow-inner" title={`Joueur (${navData.playerX}, ${navData.playerY}) | Standing: 0x${navData.standingTile.toString(16)}`}>
-          {arrow}
-        </span>
-      );
-    }
-
-    const titleStr = `(${cellWorldX}, ${cellWorldY}) [Rel ${relX > 0 ? '+' : ''}${relX}, ${relY > 0 ? '+' : ''}${relY}] : ${hexCode || 'N/A'}`;
-
-    switch (type) {
-      case TileClassification.WALKABLE:
-        return (
-          <span className="w-5 h-5 flex items-center justify-center bg-emerald-950/40 border border-emerald-900/30 text-[8px] text-emerald-500 rounded" title={`Route dégagée : ${titleStr}`}>
-            ·
-          </span>
-        );
-      case TileClassification.GRASS:
-        return (
-          <span className="w-5 h-5 flex items-center justify-center bg-green-900/50 border border-green-700/40 text-[9px] rounded" title={`Hautes Herbes : ${titleStr}`}>
-            🌾
-          </span>
-        );
-      case TileClassification.LEDGE_DOWN:
-        return (
-          <span className="w-5 h-5 flex items-center justify-center bg-amber-950/60 border border-amber-600/50 text-[9px] rounded" title={`Falaise (Saut Bas) : ${titleStr}`}>
-            🔻
-          </span>
-        );
-      case TileClassification.DOOR:
-        return (
-          <span className="w-5 h-5 flex items-center justify-center bg-cyan-950/80 border border-cyan-400 text-[10px] rounded shadow-sm animate-pulse" title={`Porte / Entrée de bâtiment : ${titleStr}`}>
-            🚪
-          </span>
-        );
-      case TileClassification.SOLID:
-      default:
-        return (
-          <span className="w-5 h-5 flex items-center justify-center bg-rose-950/50 border border-rose-900/40 text-[9px] rounded text-rose-500/70" title={`Obstacle (Solide) : ${titleStr}`}>
-            🧱
-          </span>
-        );
-    }
-  };
-
   return (
     <div className="bg-black/80 rounded-xl p-3 border border-emerald-900/50 font-mono text-[11px] text-emerald-400 backdrop-blur-md shadow-2xl relative overflow-hidden flex flex-col gap-2">
       {/* Background aesthetic grid overlay */}
@@ -372,7 +450,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           {isHealRunning && (
             <span className="font-mono text-emerald-300 font-bold bg-emerald-950/70 px-2 py-0.5 rounded text-[11px] border border-emerald-500/50 flex items-center gap-1 animate-pulse">
               <Clock className="w-3 h-3 text-emerald-400" />
-              <span>Auto-Soin : {formatTimer(navElapsedMs)}</span>
+              <LiveTimer startTime={healStartTime} isRunning={isHealRunning} prefix="Auto-Soin : " />
             </span>
           )}
 
@@ -380,7 +458,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
           {isBotRunning && botStartTime && (
             <span className="font-mono text-amber-300 font-bold bg-amber-950/50 px-2 py-0.5 rounded text-[11px] border border-amber-500/30 flex items-center gap-1">
               <Clock className="w-3 h-3 text-amber-400" />
-              <span>Bot : {formatTimer(elapsedMs)}</span>
+              <LiveTimer startTime={botStartTime} isRunning={isBotRunning} prefix="Bot : " />
             </span>
           )}
 
@@ -501,26 +579,14 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
             </div>
           </div>
 
-          {showRadar && radarData && radarData.screenTileGrid && (
-            <div className="flex flex-col items-center justify-center pt-2 pb-1">
-              <div className="grid grid-cols-9 gap-0.5 bg-black/60 p-1.5 rounded-md border border-emerald-900/50 shadow-inner">
-                {radarData.screenTileGrid.map((row, rIdx) =>
-                  row.map((cell, cIdx) => (
-                    <div key={`${rIdx}-${cIdx}`}>
-                      {renderRadarCell(
-                        cell,
-                        cIdx - 4,
-                        rIdx - 4,
-                        radarData.screenTileHexGrid?.[rIdx]?.[cIdx]
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-              <span className="text-[9px] text-emerald-500/80 mt-1">
-                Centre : Joueur à ({navData.playerX}, {navData.playerY}) | Champ de vision direct 9x9 pas
-              </span>
-            </div>
+          {showRadar && (
+            <RadarGrid
+              radarData={radarData}
+              playerX={navData.playerX}
+              playerY={navData.playerY}
+              rawFacing={navData.rawFacing}
+              standingTile={navData.standingTile}
+            />
           )}
         </div>
 
@@ -556,7 +622,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
               {isHealRunning && (
                 <span className="font-mono text-[10px] text-emerald-300 bg-emerald-900/80 px-2 py-0.5 rounded border border-emerald-500/40 flex items-center gap-1 animate-pulse">
                   <Clock className="w-3 h-3 text-emerald-400" />
-                  {formatTimer(navElapsedMs)}
+                  <LiveTimer startTime={healStartTime} isRunning={isHealRunning} />
                 </span>
               )}
               <span className="font-bold text-emerald-300 bg-emerald-900/60 px-1.5 py-0.5 rounded border border-emerald-700/40">
@@ -594,7 +660,7 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
               {isHealRunning ? (
                 <>
                   <Square className="w-3.5 h-3.5 fill-current" />
-                  <span>Arrêter l'Auto-Soin ({formatTimer(navElapsedMs)})</span>
+                  <span>Arrêter l'Auto-Soin</span>
                 </>
               ) : (
                 <>
@@ -691,4 +757,4 @@ export function RamViewer({ emulator, isBotRunning, botStartTime, botMode }: Ram
       </div>
     </div>
   );
-}
+});

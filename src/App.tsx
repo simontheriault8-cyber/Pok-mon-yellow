@@ -46,6 +46,13 @@ export default function App() {
   });
   const [botLogs, setBotLogs] = useState<BotLogEntry[]>([]);
   const [showBotLogModal, setShowBotLogModal] = useState<boolean>(false);
+  const showBotLogModalRef = useRef<boolean>(false);
+  showBotLogModalRef.current = showBotLogModal;
+
+  const handleOpenBotLogs = useCallback(() => {
+    setBotLogs(trainerBotRef.current.getLogs());
+    setShowBotLogModal(true);
+  }, []);
 
   // Settings & App State
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -117,7 +124,9 @@ export default function App() {
       setBotMode(mode);
     };
     trainerBotRef.current.onLogsUpdate = (logs) => {
-      setBotLogs(logs);
+      if (showBotLogModalRef.current) {
+        setBotLogs(logs);
+      }
     };
 
     // Load initial settings & stored ROMs in a single clean pass
@@ -499,7 +508,7 @@ export default function App() {
         botMode={botMode}
         onBotModeChange={handleBotModeChange}
         onToggleBot={handleToggleBot}
-        onOpenBotLogs={() => setShowBotLogModal(true)}
+        onOpenBotLogs={handleOpenBotLogs}
         onToggleCast={handleToggleCast}
         onPlayPause={handleTogglePlayPause}
         onReset={handleReset}

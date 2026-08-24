@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { GameBoy } from '../emulator/gameboy';
 import { VideoFilter } from '../emulator/types';
-import { Play, Pause, FastForward, Volume2, VolumeX, Camera } from 'lucide-react';
+import { Play, Pause } from 'lucide-react';
 import { RamViewer } from './RamViewer';
 import { TrainerBotMode } from '../services/simpleTrainerBot';
 
@@ -17,10 +17,9 @@ interface GbcDisplayProps {
   botMode?: TrainerBotMode;
 }
 
-export function GbcDisplay({
+export const GbcDisplay = React.memo(function GbcDisplay({
   emulator,
   filter,
-  speed,
   notification,
   isBotRunning,
   botStartTime,
@@ -29,15 +28,16 @@ export function GbcDisplay({
   onOpenRomLibrary
 }: GbcDisplayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [isStarted, setIsStarted] = useState<boolean>(false);
-  const [fps, setFps] = useState<number>(60);
-  const fpsCounterRef = useRef({ frames: 0, lastTime: performance.now() });
 
   useEffect(() => {
     if (!emulator || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = canvas.getContext('2d', { 
+      alpha: false,
+      desynchronized: true,
+      willReadFrequently: false 
+    });
     if (!ctx) return;
 
     const imgData = ctx.createImageData(160, 144);
@@ -46,18 +46,7 @@ export function GbcDisplay({
     emulator.onFrameRender = (frameBuffer: Uint32Array) => {
       data32.set(frameBuffer);
       ctx.putImageData(imgData, 0, 0);
-
-      // Calculate FPS
-      fpsCounterRef.current.frames++;
-      const now = performance.now();
-      if (now - fpsCounterRef.current.lastTime >= 1000) {
-        setFps(Math.round((fpsCounterRef.current.frames * 1000) / (now - fpsCounterRef.current.lastTime)));
-        fpsCounterRef.current.frames = 0;
-        fpsCounterRef.current.lastTime = now;
-      }
     };
-
-    setIsStarted(true);
 
     return () => {
       emulator.onFrameRender = undefined;
@@ -188,4 +177,4 @@ export function GbcDisplay({
       />
     </div>
   );
-}
+});
