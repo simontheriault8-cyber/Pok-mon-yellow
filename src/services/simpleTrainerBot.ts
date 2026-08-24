@@ -301,13 +301,11 @@ export class SimpleTrainerBot {
       // =========================================================================
       // 1. POKÉMON YELLOW RAM: Battle State & Active Mon HP Check
       // =========================================================================
-      const battleValEn = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN);
-      const battleValFr = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_FR);
-      
+      const battleAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN, mmu);
+      const battleVal = mmu.read(battleAddr);
       
       // In Gen 1 Yellow, 0xD057 is 1 (Wild) or 2 (Trainer) during battle, and 0 outside battle.
-      // We also verify battleVal <= 2 to avoid reading uninitialized RAM blocks.
-      const inBattle = (battleValEn > 0 && battleValEn <= 2) || (battleValFr > 0 && battleValFr <= 2);
+      const inBattle = battleVal === 1 || battleVal === 2;
 
       let curBattleHp = 0;
       let maxBattleHp = 0;
@@ -393,7 +391,7 @@ export class SimpleTrainerBot {
           this.lastLoggedSlot = -1;
           const hpStr = maxBattleHp > 0 ? `${curBattleHp}/${maxBattleHp} PV` : 'Initialisation...';
           const modeInfo = BOT_MODES.find((m) => m.id === this.mode);
-          this.addLog('battle', `⚔️ [RAM: 0xD057=${battleValEn || battleValFr}] Combat engagé ! Actif: Slot ${this.activeMonIndex + 1} (${hpStr}) | Équipe: ${partyStatus.aliveMons}/${partyStatus.totalMons} vivants | Mode: ${modeInfo?.name}`);
+          this.addLog('battle', `⚔️ [RAM: 0xD057=0x0${battleVal}] Combat engagé ! Actif: Slot ${this.activeMonIndex + 1} (${hpStr}) | Équipe: ${partyStatus.aliveMons}/${partyStatus.totalMons} vivants | Mode: ${modeInfo?.name}`);
         }
         this.state = 'battling';
         this.notifyState();

@@ -576,16 +576,22 @@ export class LocalNavigationEngine {
   }
 
   /**
+   * Helper to check if a battle is currently active in RAM
+   */
+  private isBattleActive(mmu: any): boolean {
+    if (!mmu) return false;
+    const battleAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN, mmu);
+    const val = mmu.read(battleAddr);
+    return val === 1 || val === 2;
+  }
+
+  /**
    * Battle Auto-Flee Handler (Module 2):
    * When an encounter is triggered during navigation, the bot repeatedly attempts to FLEE (FUITE / RUN).
    * Once successfully escaped and returned to Overworld, it flushes text and resumes its route.
    */
   private async handleBattleAutoFlee(mmu: any): Promise<void> {
-    const battleValEn = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN);
-    const battleValFr = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_FR);
-    let inBattle = (battleValEn > 0 && battleValEn <= 2) || (battleValFr > 0 && battleValFr <= 2);
-
-    if (!inBattle) return;
+    if (!this.isBattleActive(mmu)) return;
 
     this.addLog('nav', '⚔️ Combat aléatoire détecté pendant le trajet ! Tentative de FUITE en boucle...');
     this.notifyProgress('⚔️ Combat déclenché ! Tentative de FUITE...', null, null, 0);
@@ -593,80 +599,73 @@ export class LocalNavigationEngine {
     let attempts = 0;
     const maxAttempts = 150; // Safety limit
     const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
-    const topMenuYAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu);
     const topMenuXAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu);
 
     while (this.isRunning && attempts < maxAttempts) {
-      const bEn = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN);
-      const bFr = mmu.read(POKEMON_YELLOW_RAM.BATTLE_TYPE_FR);
-      inBattle = (bEn > 0 && bEn <= 2) || (bFr > 0 && bFr <= 2);
-
-      // If battle has ended (0xD057 == 0), escape was successful!
-      if (!inBattle) {
-        this.addLog('nav', '🏃💨 Fuite réussie avec succès ! Reprise immédiate du trajet.');
-        // Wait for screen fade / joypad ready
-        let fadeCount = 0;
-        while (mmu.read(joyIgnoreAddr) > 0 && fadeCount < 30) {
-          await this.tapKey('b', 60);
-          await this.wait(80);
-          fadeCount++;
-        }
-        // Extra B presses to clear any remaining text boxes
-        for (let i = 0; i < 4; i++) {
-          await this.tapKey('b', 60);
-          await this.wait(100);
-        }
-        return;
+      // Check if battle has already ended (0xD057 == 0x00)
+      if (!this.isBattleActive(mmu)) {
+        break;
       }
 
       const joyIgnore = mmu.read(joyIgnoreAddr);
 
-      // If game is busy animating or fading, press B/A to skip text
+      // If game is busy animating or displaying text, press B to skip
       if (joyIgnore > 0) {
-        await this.tapKey('b', 60);
-        await this.wait(100);
+        await this.tapKey('b', 50);
+        await this.wait(80);
         attempts++;
         continue;
       }
 
-      // Check if 2x2 Battle Menu (FIGHT / PKMN / ITEM / RUN) is ready
-      // In Gen 1, RUN (FUITE) is at Bottom-Right (Down then Right)
-      const topY = mmu.read(topMenuYAddr);
+      // Check if we accidentally opened attack submenu (X=4 or 5), press B to cancel back
       const topX = mmu.read(topMenuXAddr);
-
-      // If we accidentally opened attack submenu (X=4 or 5), press B to cancel back
       if (topX === 4 || topX === 5) {
-        await this.tapKey('b', 60);
-        await this.wait(100);
+        await this.tapKey('b', 50);
+        await this.wait(80);
       }
 
-      // Navigate to RUN button (Down + Right in 2x2 menu)
-      // 1. Move cursor to bottom row
-      await this.tapKey('down', 60);
-      await this.wait(70);
+      // In Gen 1 2x2 battle menu: [FIGHT (top-left), PKMN (top-right), ITEM (bottom-left), RUN (bottom-right)]
+      // 1. Move cursor Down
+      await this.tapKey('down', 50);
+      await this.wait(50);
+      if (!this.isBattleActive(mmu)) break;
 
-      // 2. Move cursor to right column (RUN)
-      await this.tapKey('right', 60);
-      await this.wait(70);
+      // 2. Move cursor Right (RUN / FUITE)
+      await this.tapKey('right', 50);
+      await this.wait(50);
+      if (!this.isBattleActive(mmu)) break;
 
       // 3. Press A to trigger FLEE
-      await this.tapKey('a', 80);
-      await this.wait(200);
+      await this.tapKey('a', 60);
+      await this.wait(100);
 
-      // 4. Press B and A rapidly to clear "Got away safely!" / "Can't escape!" messages
-      for (let k = 0; k < 3; k++) {
-        await this.tapKey('b', 60);
-        await this.wait(100);
-        await this.tapKey('a', 60);
-        await this.wait(100);
+      // 4. Press B and A to advance "Got away safely!" / escape messages
+      for (let k = 0; k < 4; k++) {
+        if (!this.isBattleActive(mmu)) break;
+        await this.tapKey('b', 50);
+        await this.wait(70);
       }
 
       attempts++;
     }
 
-    // Safety fallback flush
-    await this.tapKey('b', 80);
-    await this.wait(150);
+    // Battle finished: finalize escape and return cleanly to Overworld navigation
+    if (!this.isBattleActive(mmu)) {
+      this.addLog('nav', '🏃💨 Fuite réussie avec succès ! Reprise immédiate du trajet.');
+      // Wait for screen fade / joypad ready
+      let fadeCount = 0;
+      while (mmu.read(joyIgnoreAddr) > 0 && fadeCount < 25 && this.isRunning) {
+        await this.tapKey('b', 50);
+        await this.wait(60);
+        fadeCount++;
+      }
+      // Extra B presses to clear any remaining dialog boxes
+      for (let i = 0; i < 3; i++) {
+        await this.tapKey('b', 50);
+        await this.wait(80);
+      }
+      await this.wait(150);
+    }
   }
 
   private async tapKey(key: 'up' | 'down' | 'left' | 'right' | 'a' | 'b' | 'start' | 'select', durationMs: number = 80): Promise<void> {
