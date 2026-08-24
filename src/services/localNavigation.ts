@@ -269,24 +269,59 @@ export class LocalNavigationEngine {
       await this.tapKey('up', 80);
       await this.wait(150);
 
-      // Step 5: Enter the Pokecenter Door (Step UP)
+      // Step 5: Enter the Pokecenter Door (Step UP onto door tile)
       this.currentStatus = 'entering_door';
       this.addLog('door', `🚪 Entrée dans le ${pokecenter.name}...`);
       this.notifyProgress(`Entrée dans le ${pokecenter.name}...`, pokecenter.doorCoords, null, 0);
-      await this.stepDirection('up');
-      await this.wait(800); // Wait for indoor warp transition
 
-      // Verify indoor map reached
-      nav = readNavigationState(mmu)!;
-      if (nav.currentMapId !== pokecenter.indoorMapId) {
-        // Retry step UP if warp didn't trigger
+      let enterAttempts = 0;
+      const outdoorMapId = pokecenter.outdoorMapId;
+
+      while (!this.isInsidePokecenter(mmu, pokecenter.indoorMapId) && enterAttempts < 10 && this.isRunning) {
+        // Step UP with firm key press to trigger building entrance warp
         await this.stepDirection('up');
-        await this.wait(800);
-        nav = readNavigationState(mmu)!;
+        await this.wait(500);
+
+        // Check if warp transition completed
+        if (this.isInsidePokecenter(mmu, pokecenter.indoorMapId)) {
+          break;
+        }
+
+        // Check if player drifted away from door stand coordinates
+        const checkNav = readNavigationState(mmu);
+        if (checkNav && checkNav.currentMapId === outdoorMapId) {
+          if (checkNav.playerX !== pokecenter.standCoords.x || checkNav.playerY !== pokecenter.standCoords.y) {
+            this.addLog('nav', `🧭 Réalignement face à la porte (${pokecenter.standCoords.x}, ${pokecenter.standCoords.y})...`);
+            await this.microNavigateWithRAM(
+              mmu,
+              pokecenter.standCoords.x,
+              pokecenter.standCoords.y,
+              'Pas de porte',
+              false
+            );
+            await this.tapKey('up', 80);
+            await this.wait(120);
+          }
+        }
+
+        enterAttempts++;
+      }
+
+      // STRICT CHECK: If still not inside, DO NOT PROCEED to Step 6!
+      nav = readNavigationState(mmu)!;
+      if (!this.isInsidePokecenter(mmu, pokecenter.indoorMapId)) {
+        this.currentStatus = 'error';
+        const curMapName = POKEMON_YELLOW_MAPS[nav.currentMapId] || `Map 0x${nav.currentMapId.toString(16)}`;
+        this.addLog(
+          'error',
+          `❌ Échec d'entrée dans le ${pokecenter.name} (Toujours à l'extérieur : ${curMapName} (${nav.playerX}, ${nav.playerY})). Arrêt de sécurité.`
+        );
+        return false;
       }
 
       // Step 6: Standardized Pokecenter Routine
-      this.addLog('nav', `🏥 Intérieur du Centre Pokémon (Map 0x${nav.currentMapId.toString(16)})`);
+      const insideMapName = POKEMON_YELLOW_MAPS[nav.currentMapId] || `Map 0x${nav.currentMapId.toString(16)}`;
+      this.addLog('nav', `🏥 Intérieur du Centre Pokémon validé (${insideMapName} - 0x${nav.currentMapId.toString(16).toUpperCase()})`);
       this.currentStatus = 'approaching_nurse';
       this.notifyProgress('Approche du comptoir de Joëlle (3, 3)...', { x: 3, y: 3 }, { x: nav.playerX, y: nav.playerY }, 0);
 
@@ -315,10 +350,17 @@ export class LocalNavigationEngine {
       await this.microNavigateWithRAM(mmu, 3, 7, 'Sortie Centre Pokémon', false);
       if (!this.isRunning) return false;
 
-      // Step DOWN on mat to warp out
+      // Step DOWN on mat to warp out with verified loop
       this.addLog('door', '🚪 Franchissement de la sortie vers l\'extérieur...');
-      await this.stepDirection('down');
-      await this.wait(800); // Warp out transition
+      let exitAttempts = 0;
+      while (this.isInsidePokecenter(mmu, pokecenter.indoorMapId) && exitAttempts < 10 && this.isRunning) {
+        await this.stepDirection('down');
+        await this.wait(500);
+        if (!this.isInsidePokecenter(mmu, pokecenter.indoorMapId)) {
+          break;
+        }
+        exitAttempts++;
+      }
 
       // Step 9: Replay Reverse Step History Stack to Return to Training Spot
       if (returnToOrigin && this.originTrainingCoords && this.originTrainingMapId !== null) {
@@ -558,11 +600,11 @@ export class LocalNavigationEngine {
     await this.stepDirection(dir);
   }
 
-  private async stepDirection(dir: Direction): Promise<void> {
+  private async stepDirection(dir: Direction, holdDuration: number = 150): Promise<void> {
     if (!this.emulator) return;
-    // Game Boy requires holding directional key for ~130ms to register full tile movement
+    // Game Boy requires holding directional key for ~150ms to register full tile movement
     this.emulator.setJoypad(dir, true);
-    await this.wait(130);
+    await this.wait(holdDuration);
     if (this.emulator) {
       this.emulator.setJoypad(dir, false);
     }
@@ -573,6 +615,44 @@ export class LocalNavigationEngine {
     if (this.emulator && this.emulator.mmu && this.isRunning) {
       await this.handleBattleAutoFlee(this.emulator.mmu);
     }
+  }
+
+  /**
+   * Comprehensive check to determine if the player is currently inside a Pokémon Center.
+   * Checks RAM Map ID against the registered indoorMapId, known Pokecenter map IDs, and tileset === 1.
+   */
+  private isInsidePokecenter(mmu: any, expectedIndoorMapId?: number): boolean {
+    if (!mmu) return false;
+    const mapIdAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_ID_EN, mmu);
+    const tilesetAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_TILESET_EN, mmu);
+    const currentMapId = mmu.read(mapIdAddr);
+    const tileset = mmu.read(tilesetAddr);
+
+    if (expectedIndoorMapId && currentMapId === expectedIndoorMapId) return true;
+
+    // Known Pokecenter map IDs in Pokémon Yellow / Red / Blue
+    const ALL_POKECENTER_MAPS = new Set([
+      0x29, // Viridian
+      0x3A, // Pewter
+      0x44, // Cerulean
+      0x54, // Route 4 (Mt Moon)
+      0x58, // Route 10 (Rock Tunnel)
+      0x5E, // Vermilion
+      0x64, // Lavender
+      0x68, // Celadon
+      0x76, // Fuchsia
+      0x87, // Saffron
+      0x97, // Cinnabar
+      0xAC, // Indigo Plateau
+    ]);
+
+    if (ALL_POKECENTER_MAPS.has(currentMapId)) return true;
+
+    // Tileset 1 is Pokecenter / Interior in Gen 1 (Overworld is tileset 0)
+    // Outdoor cities are maps 0x00 to 0x0B and Routes 0x0C to 0x25
+    if (tileset === 1 && currentMapId > 0x0B) return true;
+
+    return false;
   }
 
   /**

@@ -34,7 +34,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x01: {
     name: 'Centre PKMN Jadielle',
     outdoorMapId: 0x01,
-    indoorMapId: 0x2A, // 42 in dec
+    indoorMapId: 0x29, // 41 in dec (0x29 is Pokecenter, 0x2A is Mart)
     doorCoords: { x: 23, y: 25 },
     standCoords: { x: 23, y: 26 },
   },
@@ -42,7 +42,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x02: {
     name: 'Centre PKMN Argenta',
     outdoorMapId: 0x02,
-    indoorMapId: 0x36, // 54 in dec
+    indoorMapId: 0x3A, // 58 in dec
     doorCoords: { x: 13, y: 25 },
     standCoords: { x: 13, y: 26 },
   },
@@ -50,7 +50,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x03: {
     name: 'Centre PKMN Azuria',
     outdoorMapId: 0x03,
-    indoorMapId: 0x3A, // 58 in dec
+    indoorMapId: 0x44, // 68 in dec
     doorCoords: { x: 19, y: 17 },
     standCoords: { x: 19, y: 18 },
   },
@@ -58,7 +58,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x05: {
     name: 'Centre PKMN Carmin sur Mer',
     outdoorMapId: 0x05,
-    indoorMapId: 0x56, // 86 in dec
+    indoorMapId: 0x5E, // 94 in dec
     doorCoords: { x: 11, y: 3 },
     standCoords: { x: 11, y: 4 },
   },
@@ -66,7 +66,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x06: {
     name: 'Centre PKMN Céladopole',
     outdoorMapId: 0x06,
-    indoorMapId: 0x7E, // 126 in dec
+    indoorMapId: 0x68, // 104 in dec
     doorCoords: { x: 41, y: 9 },
     standCoords: { x: 41, y: 10 },
   },
@@ -74,7 +74,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x04: {
     name: 'Centre PKMN Lavanville',
     outdoorMapId: 0x04,
-    indoorMapId: 0x5F, // 95 in dec
+    indoorMapId: 0x64, // 100 in dec
     doorCoords: { x: 5, y: 5 },
     standCoords: { x: 5, y: 6 },
   },
@@ -82,7 +82,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x07: {
     name: 'Centre PKMN Parmanie',
     outdoorMapId: 0x07,
-    indoorMapId: 0x9D, // 157 in dec
+    indoorMapId: 0x76, // 118 in dec
     doorCoords: { x: 19, y: 27 },
     standCoords: { x: 19, y: 28 },
   },
@@ -90,7 +90,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x0A: {
     name: 'Centre PKMN Safrania',
     outdoorMapId: 0x0A,
-    indoorMapId: 0xB6, // 182 in dec
+    indoorMapId: 0x87, // 135 in dec
     doorCoords: { x: 9, y: 29 },
     standCoords: { x: 9, y: 30 },
   },
@@ -98,7 +98,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x08: {
     name: 'Centre PKMN Cramois\'Île',
     outdoorMapId: 0x08,
-    indoorMapId: 0xA6, // 166 in dec
+    indoorMapId: 0x97, // 151 in dec
     doorCoords: { x: 11, y: 11 },
     standCoords: { x: 11, y: 12 },
   },
@@ -106,7 +106,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x0F: {
     name: 'Centre PKMN Route 4 (Mont Sélénite)',
     outdoorMapId: 0x0F,
-    indoorMapId: 0x44, // 68 in dec
+    indoorMapId: 0x54, // 84 in dec
     doorCoords: { x: 11, y: 5 },
     standCoords: { x: 11, y: 6 },
   },
@@ -114,7 +114,7 @@ export const POKECENTERS_REGISTRY: Record<number, PokecenterData> = {
   0x09: {
     name: 'Centre PKMN Plateau Indigo',
     outdoorMapId: 0x09,
-    indoorMapId: 0x76,
+    indoorMapId: 0xAC, // 172 in dec
     doorCoords: { x: 9, y: 5 },
     standCoords: { x: 9, y: 6 },
   },
