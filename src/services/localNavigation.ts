@@ -586,6 +586,76 @@ export class LocalNavigationEngine {
   }
 
   /**
+   * Character map decoder for Generation 1 Pokémon (Yellow / Red / Blue).
+   */
+  private decodeChar(byteVal: number): string {
+    if (byteVal >= 0x80 && byteVal <= 0x99) return String.fromCharCode(65 + (byteVal - 0x80)); // 'A'..'Z'
+    if (byteVal >= 0xA0 && byteVal <= 0xB9) return String.fromCharCode(97 + (byteVal - 0xA0)); // 'a'..'z'
+    if (byteVal >= 0xF6 && byteVal <= 0xFF) return String.fromCharCode(48 + (byteVal - 0xF6)); // '0'..'9'
+    switch (byteVal) {
+      case 0x7F: return ' ';
+      case 0xED: return '▶';
+      case 0xEE: return '▼';
+      case 0xE7: return '!';
+      case 0xE8: return '?';
+      default: return '';
+    }
+  }
+
+  /**
+   * Reads and decodes a line from the Game Boy screen tilemap (0xC3A0).
+   */
+  private readScreenLine(mmu: any, startAddr: number, length: number = 20): string {
+    let res = '';
+    for (let i = 0; i < length; i++) {
+      const b = mmu.read(startAddr + i);
+      const ch = this.decodeChar(b);
+      if (ch) res += ch;
+    }
+    return res.trim();
+  }
+
+  /**
+   * Helper to check if the standard 2x2 battle menu (FIGHT / PKMN / ITEM / RUN) is actively drawn on the screen.
+   */
+  private isBattleMenu2x2Visible(mmu: any): boolean {
+    const joyIgnore = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu));
+    if (joyIgnore > 0) return false;
+
+    // Check lines 12 to 17 in screen buffer (0xC3A0)
+    for (let r = 12; r <= 17; r++) {
+      const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
+      if (
+        line.includes('FIGHT') ||
+        line.includes('PKMN') ||
+        line.includes('ATTAQ') ||
+        line.includes('ITEM') ||
+        line.includes('RUN') ||
+        line.includes('OBJET') ||
+        line.includes('FUITE')
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Helper to check if the party selection screen (6 Pokemon list) is actively drawn on screen.
+   */
+  private isPartyScreenVisible(mmu: any): boolean {
+    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
+    if (topY === 1) return true;
+    for (let r = 13; r <= 17; r++) {
+      const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
+      if (line.includes('CHOOSE') || line.includes('POK') || line.includes('CHOISIS')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Battle Auto-Flee Handler (Module 2):
    * When an encounter is triggered during navigation, the bot repeatedly attempts to FLEE (FUITE / RUN).
    * Once successfully escaped and returned to Overworld, it flushes text and resumes its route.
@@ -599,7 +669,6 @@ export class LocalNavigationEngine {
     let attempts = 0;
     const maxAttempts = 180; // Safety limit
     const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
-    const topMenuYAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu);
     const topMenuXAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu);
 
     while (this.isRunning && attempts < maxAttempts) {
@@ -610,7 +679,7 @@ export class LocalNavigationEngine {
 
       const joyIgnore = mmu.read(joyIgnoreAddr);
 
-      // If game is busy animating or text is scrolling, press B to advance
+      // If game is busy animating or text is scrolling, advance with B
       if (joyIgnore > 0) {
         await this.tapKey('b', 50);
         await this.wait(70);
@@ -618,38 +687,41 @@ export class LocalNavigationEngine {
         continue;
       }
 
-      const topY = mmu.read(topMenuYAddr);
+      // If in party screen or attack screen, cancel back with B
       const topX = mmu.read(topMenuXAddr);
-
-      // If we are in PKMN Party screen (topY === 1), Attack screen (topX === 4|5), or Item screen (topY < 12)
-      // Press B to cancel and return to main 2x2 Battle Menu
-      if (topY !== 12 || topX === 4 || topX === 5) {
+      if (this.isPartyScreenVisible(mmu) || topX === 4 || topX === 5) {
         await this.tapKey('b', 50);
-        await this.wait(80);
+        await this.wait(90);
         attempts++;
         continue;
       }
 
-      // We are on the 2x2 Battle Menu (topY === 12): [FIGHT (top-left), PKMN (top-right), ITEM (bottom-left), RUN (bottom-right)]
-      // 1. Move cursor Down (to ITEM/RUN row)
-      await this.tapKey('down', 50);
-      await this.wait(50);
-      if (!this.isBattleActive(mmu)) break;
-
-      // 2. Move cursor Right (to RUN column)
-      await this.tapKey('right', 50);
-      await this.wait(50);
-      if (!this.isBattleActive(mmu)) break;
-
-      // 3. Press A to trigger FLEE (FUITE)
-      await this.tapKey('a', 60);
-      await this.wait(120);
-
-      // 4. Press B to advance "Got away safely!" / escape messages
-      for (let k = 0; k < 3; k++) {
+      // If the 2x2 Battle Menu is active: [FIGHT (top-left), PKMN (top-right), ITEM (bottom-left), RUN (bottom-right)]
+      if (this.isBattleMenu2x2Visible(mmu)) {
+        // 1. Move cursor Down (to ITEM / RUN row)
+        await this.tapKey('down', 50);
+        await this.wait(60);
         if (!this.isBattleActive(mmu)) break;
-        await this.tapKey('b', 50);
-        await this.wait(70);
+
+        // 2. Move cursor Right (to RUN column)
+        await this.tapKey('right', 50);
+        await this.wait(60);
+        if (!this.isBattleActive(mmu)) break;
+
+        // 3. Press A to trigger FLEE (FUITE / RUN)
+        await this.tapKey('a', 60);
+        await this.wait(140);
+
+        // 4. Press B to advance "Got away safely!" / escape messages
+        for (let k = 0; k < 3; k++) {
+          if (!this.isBattleActive(mmu)) break;
+          await this.tapKey('b', 50);
+          await this.wait(80);
+        }
+      } else {
+        // Intro text / animation before menu ("Wild PIDGEY appeared!", "Go NIDORAN!")
+        await this.tapKey('a', 50);
+        await this.wait(90);
       }
 
       attempts++;
@@ -670,7 +742,7 @@ export class LocalNavigationEngine {
         await this.tapKey('b', 50);
         await this.wait(80);
       }
-      await this.wait(150);
+      await this.wait(200);
     }
   }
 
