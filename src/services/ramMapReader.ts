@@ -31,7 +31,7 @@ export const OVERWORLD_WALKABLE_8x8 = new Set([
   0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
   0x1B, 0x20, 0x21, 0x22, 0x23,
   0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31,
-  0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+  0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3E, 0x3F,
   0x48, 0x49, 0x7E, 0x7F
 ]);
 
@@ -40,9 +40,9 @@ export const OVERWORLD_GRASS_8x8 = new Set([
   0x52
 ]);
 
-// Hop-down Ledges in Overworld (jumpable ridges: 0x1D, 0x27, 0x36, 0x37)
+// Hop-down Ledges in Overworld (jumpable ridges: 0x16, 0x17, 0x1D, 0x26, 0x27, 0x36, 0x37)
 export const OVERWORLD_LEDGE_DOWN_8x8 = new Set<number>([
-  0x1D, 0x27, 0x36, 0x37
+  0x16, 0x17, 0x1D, 0x26, 0x27, 0x36, 0x37
 ]);
 
 // Door & entrance tiles in Overworld
@@ -52,13 +52,13 @@ export const OVERWORLD_DOOR_8x8 = new Set<number>([
 
 // Known strictly SOLID tiles in Overworld (Trees, mountain walls, fences, bollard posts, building facades, roofs, water)
 export const OVERWORLD_SOLID_8x8 = new Set([
-  // Trees (standard 4-quadrant tree & small single pine trees & tree tops)
-  0x1C, 0x1E, 0x28, 0x29, 0x2A, 0x2B, 0x32, 0x33, 0x34, 0x35, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x4C, 0x4D, 0x4E, 0x4F,
+  // Trees (standard 4-quadrant tree & small single pine trees & tree tops & cut tree arbuste 0x3D)
+  0x1C, 0x1E, 0x28, 0x29, 0x2A, 0x2B, 0x32, 0x33, 0x34, 0x35, 0x3D, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x4C, 0x4D, 0x4E, 0x4F,
   // Fences, signposts & bollard posts (00000000 barrier posts)
   0x18, 0x19, 0x1A, 0x24, 0x2A, 0x2B,
   0x50, 0x51, 0x53, 0x54, 0x55,
-  // Mountain walls & cliff edges
-  0x15, 0x16, 0x17, 0x25, 0x26,
+  // Mountain walls & cliff edges (vertical impassable walls)
+  0x15, 0x25,
   // Water / River / Ocean
   0x14, 0x1F,
   // Building windows, walls, signs (POKé / MART / SHOP) & facades (Pokecenter, Mart, Houses)
@@ -348,6 +348,16 @@ function evaluate2x2Step(
     return TileClassification.WALKABLE;
   }
 
+  // Check if any sub-tile is a hop-down ledge (1-way downward jump)
+  if (
+    OVERWORLD_LEDGE_DOWN_8x8.has(tl) ||
+    OVERWORLD_LEDGE_DOWN_8x8.has(tr) ||
+    OVERWORLD_LEDGE_DOWN_8x8.has(bl) ||
+    OVERWORLD_LEDGE_DOWN_8x8.has(br)
+  ) {
+    return TileClassification.LEDGE_DOWN;
+  }
+
   // Check if any sub-tile is explicitly strictly SOLID (Trees, cliff walls, fences, roofs, water)
   if (
     isTileSolid(tl, tileset) ||
@@ -356,16 +366,6 @@ function evaluate2x2Step(
     isTileSolid(br, tileset)
   ) {
     return TileClassification.SOLID;
-  }
-
-  // Check if any sub-tile is a hop-down ledge
-  if (
-    OVERWORLD_LEDGE_DOWN_8x8.has(tl) ||
-    OVERWORLD_LEDGE_DOWN_8x8.has(tr) ||
-    OVERWORLD_LEDGE_DOWN_8x8.has(bl) ||
-    OVERWORLD_LEDGE_DOWN_8x8.has(br)
-  ) {
-    return TileClassification.LEDGE_DOWN;
   }
 
   // Check if any sub-tile is tall grass
