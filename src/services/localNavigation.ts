@@ -8,7 +8,7 @@
 // 6. Perfect Return Memory: Records full step history stack and plays inverse moves on return journey!
 
 import { GameBoy } from '../emulator/gameboy';
-import { POKEMON_YELLOW_RAM, resolveAddr } from './pokemonYellowRam';
+import { POKEMON_YELLOW_RAM, resolveAddr, readPartyStatusFromRAM } from './pokemonYellowRam';
 import { readNavigationState, POKEMON_YELLOW_MAPS } from './worldNavigation';
 import { readRamMapData, collisionCache, TileClassification } from './ramMapReader';
 import { AStarPathfinder, StepDirection } from './pathfinder';
@@ -558,37 +558,102 @@ export class LocalNavigationEngine {
   }
 
   /**
-   * Automate Nurse Joy Dialogue Sequence
+   * Automate Nurse Joy Dialogue Sequence with Multi-Page & Text Box Closure Verification
    */
   private async interactWithNurse(mmu: any): Promise<void> {
     const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
-    let attempts = 20;
+    let attempts = 0;
+    const maxAttempts = 60;
+    let healStarted = false;
+    let healFinished = false;
 
-    // Trigger dialogue with A button
+    // Trigger dialogue with Nurse Joy (Press A facing UP)
     await this.tapKey('a', 100);
-    await this.wait(400);
+    await this.wait(350);
 
-    while (attempts > 0 && this.isRunning) {
+    while (attempts < maxAttempts && this.isRunning) {
       const joyIgnore = mmu.read(joyIgnoreAddr);
 
-      // Press A or B to advance dialogue
-      await this.tapKey('a', 80);
-      await this.wait(250);
+      // Check current party HP status in RAM
+      const party = readPartyStatusFromRAM(mmu);
+      const isPartyFullHp =
+        party.isValid &&
+        party.aliveMons === party.totalMons &&
+        party.monsHp.length > 0 &&
+        party.monsHp.every((m) => m.curHp === m.maxHp);
 
-      // Check if text prompt is waiting for input
-      if (joyIgnore === 0) {
-        await this.tapKey('b', 80);
-        await this.wait(200);
+      if (isPartyFullHp) {
+        healFinished = true;
       }
 
-      attempts--;
+      // Read screen lines 12 to 17 (Dialogue Box area)
+      const screenLines: string[] = [];
+      for (let r = 12; r <= 17; r++) {
+        screenLines.push(this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase());
+      }
+      const fullText = screenLines.join(' ');
+
+      const hasDialogueText =
+        fullText.includes('WELCOME') ||
+        fullText.includes('BIENVENUE') ||
+        fullText.includes('HEAL') ||
+        fullText.includes('SOIGNER') ||
+        fullText.includes('POK') ||
+        fullText.includes('NEED') ||
+        fullText.includes('THANK') ||
+        fullText.includes('MERCI') ||
+        fullText.includes('FIGHTING') ||
+        fullText.includes('FIT') ||
+        fullText.includes('FORME') ||
+        fullText.includes('HOPE') ||
+        fullText.includes('AGAIN') ||
+        fullText.includes('BIENT');
+
+      // Detection of healing starting
+      if (fullText.includes('NEED') || fullText.includes('CONFIEZ') || fullText.includes('OK')) {
+        healStarted = true;
+      }
+
+      // If healing is done, and NO dialogue text is on screen, and Joypad is fully unlocked
+      if (healFinished && !hasDialogueText && joyIgnore === 0 && attempts > 5) {
+        this.addLog('nurse', '✅ Dialogue de soin terminé et boîte de texte fermée.');
+        break;
+      }
+
+      // If game is busy scrolling text or playing jingle, advance or wait
+      if (joyIgnore > 0) {
+        // While healing jingle is playing (Nurse Joy turned around), wait calmly
+        if (healStarted && !healFinished) {
+          await this.wait(200);
+        } else {
+          // Advance dialogue page
+          await this.tapKey('a', 60);
+          await this.wait(120);
+        }
+      } else {
+        // Joypad is ready for user input (prompt, confirmation or end of page)
+        // If "Shall we heal...?" YES/NO menu or dialog prompt, press A to confirm
+        await this.tapKey('a', 60);
+        await this.wait(180);
+
+        // Extra tap on B after heal is finished to close final "We hope to see you again!" page
+        if (healFinished) {
+          await this.tapKey('b', 60);
+          await this.wait(180);
+        }
+      }
+
+      attempts++;
     }
 
-    // Extra safety presses to ensure dialogue is fully closed
-    await this.tapKey('b', 80);
-    await this.wait(200);
-    await this.tapKey('b', 80);
-    await this.wait(200);
+    // Final safety check: clear any residual text box state
+    for (let i = 0; i < 3; i++) {
+      if (mmu.read(joyIgnoreAddr) > 0) {
+        await this.tapKey('b', 50);
+        await this.wait(100);
+      }
+    }
+    await this.wait(250);
   }
 
   // --- Low-Level Joypad & RAM Step Helpers ---
