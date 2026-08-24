@@ -176,11 +176,8 @@ export class AStarPathfinder {
           }
         }
 
-        // Base step cost
-        let stepCost = 1;
-        if (tileType === TileClassification.GRASS) {
-          stepCost = 2; // Slight penalty for tall grass
-        }
+        // Base step cost (Neutral cost for Grass and Walkable roads so bot does not detour around grass)
+        const stepCost = 1;
 
         const tentativeG = current.g + stepCost;
         const previousG = gScore.get(nKey);

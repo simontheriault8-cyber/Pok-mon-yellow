@@ -597,8 +597,9 @@ export class LocalNavigationEngine {
     this.notifyProgress('⚔️ Combat déclenché ! Tentative de FUITE...', null, null, 0);
 
     let attempts = 0;
-    const maxAttempts = 150; // Safety limit
+    const maxAttempts = 180; // Safety limit
     const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
+    const topMenuYAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu);
     const topMenuXAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu);
 
     while (this.isRunning && attempts < maxAttempts) {
@@ -609,38 +610,43 @@ export class LocalNavigationEngine {
 
       const joyIgnore = mmu.read(joyIgnoreAddr);
 
-      // If game is busy animating or displaying text, press B to skip
+      // If game is busy animating or text is scrolling, press B to advance
       if (joyIgnore > 0) {
+        await this.tapKey('b', 50);
+        await this.wait(70);
+        attempts++;
+        continue;
+      }
+
+      const topY = mmu.read(topMenuYAddr);
+      const topX = mmu.read(topMenuXAddr);
+
+      // If we are in PKMN Party screen (topY === 1), Attack screen (topX === 4|5), or Item screen (topY < 12)
+      // Press B to cancel and return to main 2x2 Battle Menu
+      if (topY !== 12 || topX === 4 || topX === 5) {
         await this.tapKey('b', 50);
         await this.wait(80);
         attempts++;
         continue;
       }
 
-      // Check if we accidentally opened attack submenu (X=4 or 5), press B to cancel back
-      const topX = mmu.read(topMenuXAddr);
-      if (topX === 4 || topX === 5) {
-        await this.tapKey('b', 50);
-        await this.wait(80);
-      }
-
-      // In Gen 1 2x2 battle menu: [FIGHT (top-left), PKMN (top-right), ITEM (bottom-left), RUN (bottom-right)]
-      // 1. Move cursor Down
+      // We are on the 2x2 Battle Menu (topY === 12): [FIGHT (top-left), PKMN (top-right), ITEM (bottom-left), RUN (bottom-right)]
+      // 1. Move cursor Down (to ITEM/RUN row)
       await this.tapKey('down', 50);
       await this.wait(50);
       if (!this.isBattleActive(mmu)) break;
 
-      // 2. Move cursor Right (RUN / FUITE)
+      // 2. Move cursor Right (to RUN column)
       await this.tapKey('right', 50);
       await this.wait(50);
       if (!this.isBattleActive(mmu)) break;
 
-      // 3. Press A to trigger FLEE
+      // 3. Press A to trigger FLEE (FUITE)
       await this.tapKey('a', 60);
-      await this.wait(100);
+      await this.wait(120);
 
-      // 4. Press B and A to advance "Got away safely!" / escape messages
-      for (let k = 0; k < 4; k++) {
+      // 4. Press B to advance "Got away safely!" / escape messages
+      for (let k = 0; k < 3; k++) {
         if (!this.isBattleActive(mmu)) break;
         await this.tapKey('b', 50);
         await this.wait(70);
