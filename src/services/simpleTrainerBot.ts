@@ -364,6 +364,17 @@ export class SimpleTrainerBot {
       }
 
       // =========================================================================
+      // 2.5 MOVE LEARNING DETECTION (Safety Stop if Pokémon already has 4 moves)
+      // If a Pokémon levels up and tries to learn a new move with 4 moves already known,
+      // the game asks to delete a move to make room. The bot stops to let the player decide.
+      // =========================================================================
+      const moveLearnPrompt = this.detectMoveLearnPrompt(mmu);
+      if (moveLearnPrompt.isLearning) {
+        this.stop(`Apprentissage d'attaque : ${moveLearnPrompt.reason}. Choisissez quelle attaque conserver ou oublier.`);
+        return;
+      }
+
+      // =========================================================================
       // 3. ACTIVE MON FAINTED IN BATTLE -> AUTO-SWITCH HANDLER
       // Si le Pokémon actif tombe K.O. en combat (PV = 0) et qu'il reste d'autres Pokémon vivants
       // =========================================================================
@@ -445,6 +456,72 @@ export class SimpleTrainerBot {
     } finally {
       this.stepBusy = false;
     }
+  }
+
+  /**
+   * Detects if a Pokémon is attempting to learn a new move and already has 4 moves.
+   * In Pokémon Yellow (and Red/Blue), when a Pokémon with 4 moves levels up and wants to learn a move:
+   * 1. Screen displays: "{MON} is trying to learn {MOVE}!" / "But {MON} can't learn more than 4 moves!"
+   * 2. Followed by: "Delete an older move to make room for {MOVE}?" with a YES/NO prompt.
+   * 3. Or French: "{MON} veut apprendre {ATTAQUE}!" / "Supprimer une ancienne attaque...?"
+   *
+   * If detected, returns { isLearning: true, reason: string } so the bot can safely pause.
+   */
+  private detectMoveLearnPrompt(mmu: any): { isLearning: boolean; reason: string } {
+    if (!mmu) return { isLearning: false, reason: '' };
+
+    // Inspect the lower dialog rows 12..17 in the tilemap buffer (0xC3A0)
+    let screenFullText = '';
+    for (let r = 12; r <= 17; r++) {
+      const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
+      if (line) {
+        screenFullText += ' ' + line;
+      }
+    }
+
+    // Check English / French signature keywords for move learning with 4 moves
+    const isMoveLearnAttempt =
+      screenFullText.includes('TRYING TO LEARN') ||
+      screenFullText.includes('LEARN MORE THAN 4') ||
+      screenFullText.includes('DELETE A MOVE') ||
+      screenFullText.includes('DELETE AN OLDER') ||
+      screenFullText.includes('MAKE ROOM FOR') ||
+      screenFullText.includes('VEUT APPRENDRE') ||
+      screenFullText.includes('SUPPRIMER UNE') ||
+      screenFullText.includes('OUBLIER UNE') ||
+      screenFullText.includes('EFFACER UNE');
+
+    if (isMoveLearnAttempt) {
+      // Check if Pokémon already knows 4 moves in party struct
+      const partyStatus = this.getPartyStatus(mmu);
+      const monIndex = this.activeMonIndex;
+      let knownMovesCount = 4; // Default safe assumption if learning attempt is detected
+
+      const partyMovesBase = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_MOVES_EN, mmu);
+      if (monIndex >= 0 && monIndex < partyStatus.totalMons) {
+        const offset = monIndex * POKEMON_YELLOW_RAM.PARTY_STRUCT_SIZE;
+        let count = 0;
+        for (let m = 0; m < 4; m++) {
+          const moveId = mmu.read(partyMovesBase + offset + m);
+          if (moveId > 0 && moveId !== 0xFF) {
+            count++;
+          }
+        }
+        if (count > 0) {
+          knownMovesCount = count;
+        }
+      }
+
+      // If Pokémon has 4 moves (or already at capacity), stop immediately!
+      if (knownMovesCount >= 4 || screenFullText.includes('DELETE') || screenFullText.includes('SUPPRIMER') || screenFullText.includes('MORE THAN 4')) {
+        return {
+          isLearning: true,
+          reason: `Nouvelle capacité détectée (4/4 attaques déjà connues)`
+        };
+      }
+    }
+
+    return { isLearning: false, reason: '' };
   }
 
   /**
@@ -951,6 +1028,11 @@ export class SimpleTrainerBot {
     let attempts = 0;
     // Attendre que la GameBoy rende la main au joueur (fin des animations/fades)
     while (mmu.read(joyIgnoreAddr) > 0 && attempts < 40) {
+      const moveLearn = this.detectMoveLearnPrompt(mmu);
+      if (moveLearn.isLearning) {
+        this.stop(`Apprentissage d'attaque : ${moveLearn.reason}. Choisissez quelle attaque conserver ou oublier.`);
+        return;
+      }
       // Tap B while waiting to clear any victory texts
       await this.tapKey('b', 60);
       await this.wait(80);
@@ -959,6 +1041,11 @@ export class SimpleTrainerBot {
 
     // Purge de sécurité finale (fermeture des textes de victoire des dresseurs, pokédex, surnom)
     for (let i = 0; i < 6; i++) {
+      const moveLearn = this.detectMoveLearnPrompt(mmu);
+      if (moveLearn.isLearning) {
+        this.stop(`Apprentissage d'attaque : ${moveLearn.reason}. Choisissez quelle attaque conserver ou oublier.`);
+        return;
+      }
       const diag = this.getScreenDialogueText(mmu);
       if (diag.line1.toUpperCase().includes('NICKNAME') || diag.line2.toUpperCase().includes('NICKNAME')) {
         // Si le clavier de surnom est ouvert, valider directement avec START

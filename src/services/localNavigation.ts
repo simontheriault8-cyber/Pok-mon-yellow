@@ -878,6 +878,43 @@ export class LocalNavigationEngine {
   }
 
   /**
+   * Helper to detect if a Pokémon is attempting to learn a move during/after battle when it already has 4 moves.
+   */
+  private detectMoveLearnPrompt(mmu: any): { isLearning: boolean; reason: string } {
+    if (!mmu) return { isLearning: false, reason: '' };
+
+    let screenFullText = '';
+    for (let r = 12; r <= 17; r++) {
+      const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
+      if (line) {
+        screenFullText += ' ' + line;
+      }
+    }
+
+    const isMoveLearnAttempt =
+      screenFullText.includes('TRYING TO LEARN') ||
+      screenFullText.includes('LEARN MORE THAN 4') ||
+      screenFullText.includes('DELETE A MOVE') ||
+      screenFullText.includes('DELETE AN OLDER') ||
+      screenFullText.includes('MAKE ROOM FOR') ||
+      screenFullText.includes('VEUT APPRENDRE') ||
+      screenFullText.includes('SUPPRIMER UNE') ||
+      screenFullText.includes('OUBLIER UNE') ||
+      screenFullText.includes('EFFACER UNE');
+
+    if (isMoveLearnAttempt) {
+      if (screenFullText.includes('DELETE') || screenFullText.includes('SUPPRIMER') || screenFullText.includes('MORE THAN 4')) {
+        return {
+          isLearning: true,
+          reason: `Nouvelle capacité détectée (4/4 attaques déjà connues)`
+        };
+      }
+    }
+
+    return { isLearning: false, reason: '' };
+  }
+
+  /**
    * Battle Auto-Flee Handler (Module 2):
    * When an encounter is triggered during navigation, the bot repeatedly attempts to FLEE (FUITE / RUN).
    * Once successfully escaped and returned to Overworld, it flushes text and resumes its route.
@@ -894,6 +931,14 @@ export class LocalNavigationEngine {
     const topMenuXAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu);
 
     while (this.isRunning && attempts < maxAttempts) {
+      // Check for move learning prompt (safety stop for manual selection)
+      const moveLearn = this.detectMoveLearnPrompt(mmu);
+      if (moveLearn.isLearning) {
+        this.stop();
+        this.addLog('error', `🛑 Arrêt automatique : ${moveLearn.reason}. Choisissez quelle attaque conserver.`);
+        return;
+      }
+
       // Check if battle has already ended (0xD057 == 0x00)
       if (!this.isBattleActive(mmu)) {
         break;
@@ -955,12 +1000,24 @@ export class LocalNavigationEngine {
       // Wait for screen fade / joypad ready
       let fadeCount = 0;
       while (mmu.read(joyIgnoreAddr) > 0 && fadeCount < 25 && this.isRunning) {
+        const moveLearn = this.detectMoveLearnPrompt(mmu);
+        if (moveLearn.isLearning) {
+          this.stop();
+          this.addLog('error', `🛑 Arrêt automatique : ${moveLearn.reason}. Choisissez quelle attaque conserver.`);
+          return;
+        }
         await this.tapKey('b', 50);
         await this.wait(60);
         fadeCount++;
       }
       // Extra B presses to clear any remaining dialog boxes
       for (let i = 0; i < 3; i++) {
+        const moveLearn = this.detectMoveLearnPrompt(mmu);
+        if (moveLearn.isLearning) {
+          this.stop();
+          this.addLog('error', `🛑 Arrêt automatique : ${moveLearn.reason}. Choisissez quelle attaque conserver.`);
+          return;
+        }
         await this.tapKey('b', 50);
         await this.wait(80);
       }
