@@ -484,6 +484,14 @@ export class LocalNavigationEngine {
       const dist = Math.abs(curX - targetX) + Math.abs(curY - targetY);
       if (dist === 0) return true;
 
+      // Safety check: If a dialog box is unexpectedly active during movement, dismiss it with [B]!
+      const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
+      if (this.isTextBoxActiveOnScreen(mmu) || mmu.read(joyIgnoreAddr) > 0) {
+        await this.tapKey('b', 70);
+        await this.wait(140);
+        continue;
+      }
+
       // 1. Read live 2D RAM collision matrix
       const mapData = readRamMapData(mmu);
       if (!mapData) {
@@ -655,9 +663,11 @@ export class LocalNavigationEngine {
   private async interactWithNurse(mmu: any): Promise<void> {
     const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
     let attempts = 0;
-    const maxAttempts = 160;
+    const maxAttempts = 180;
     let healAccepted = false;
     let healAnimationCompleted = false;
+    let farewellSeen = false;
+    let postHealTaps = 0;
 
     this.addLog('nurse', '💬 Lancement du dialogue avec l\'Infirmière Joëlle [A]...');
 
@@ -690,15 +700,32 @@ export class LocalNavigationEngine {
       // Detect healing music / animation phase (Nurse faces machine, joypad locked)
       if (healAccepted && !healAnimationCompleted) {
         this.addLog('nurse', '🎵 Soin en cours sur la machine...');
-        // Wait for heal jingle & light flashes to complete (~2.4 seconds in Gen 1)
-        await this.wait(2400);
+        // Wait for heal jingle & light flashes to complete (~2.5 seconds in Gen 1)
+        await this.wait(2500);
         healAnimationCompleted = true;
         this.addLog('nurse', '✨ Animation de soin terminée. Fermeture des dialogues...');
       }
 
+      // Phase 3 Detection: Farewell message ("We hope to see you again!" / "A bientôt!")
+      if (
+        healAnimationCompleted &&
+        (fullText.includes('HOPE') ||
+         fullText.includes('REVOIR') ||
+         fullText.includes('AGAIN') ||
+         fullText.includes('BIENT') ||
+         fullText.includes('SEE YOU'))
+      ) {
+        farewellSeen = true;
+      }
+
+      if (healAnimationCompleted) {
+        postHealTaps++;
+      }
+
       // EXIT CONDITION:
-      // Healing animation is completed, no text box remains on screen, and Game Boy joypad is fully unlocked
-      if (healAnimationCompleted && !isBoxVisible && joyIgnore === 0 && attempts > 10) {
+      // Healing animation is completed, we have seen the farewell message (or done plenty of post-heal B taps),
+      // AND NO text box remains on screen, and Game Boy joypad is fully unlocked
+      if (healAnimationCompleted && (farewellSeen || postHealTaps > 15) && !isBoxVisible && joyIgnore === 0) {
         this.addLog('nurse', '✅ Dialogue terminé, boîte fermée et équipe soignée.');
         break;
       }
@@ -707,12 +734,12 @@ export class LocalNavigationEngine {
       if (!healAccepted && !healAnimationCompleted) {
         // Phase 1: Advance "Welcome" and confirm "Shall we heal?" with [A]
         await this.tapKey('a', 70);
-        await this.wait(160);
+        await this.wait(150);
       } else {
         // Phase 3: Outro messages ("fighting fit", "hope to see you again")
         // Pulse [B] to dismiss without re-talking to Nurse Joy
         await this.tapKey('b', 70);
-        await this.wait(160);
+        await this.wait(150);
       }
 
       attempts++;
