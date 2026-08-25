@@ -255,43 +255,26 @@ export function getClosestPokecenterForMap(currentMapId: number): PokecenterData
 }
 
 /**
- * Macro Graph Search (BFS): Computes the sequence of Zone Boundaries to traverse.
+ * Generic Macro Graph Search (BFS): Computes the sequence of Zone Boundaries to traverse between any two maps.
  */
-export function planMacroRoute(originMapId: number, targetOutdoorMapId?: number): MacroRoutePlan | null {
-  const targetPokecenter = targetOutdoorMapId ? POKECENTERS_REGISTRY[targetOutdoorMapId] || getClosestPokecenterForMap(originMapId) : getClosestPokecenterForMap(originMapId);
-  const targetMap = targetPokecenter.outdoorMapId;
-
-  // If already in target town/city
-  if (originMapId === targetMap) {
-    return {
-      originMapId,
-      targetPokecenterOutdoorMapId: targetMap,
-      targetPokecenterIndoorMapId: targetPokecenter.indoorMapId,
-      doorCoords: targetPokecenter.doorCoords,
-      boundaries: [],
-    };
+export function planMacroRouteBetween(fromMapId: number, toMapId: number): ZoneBoundary[] {
+  if (fromMapId === toMapId) {
+    return [];
   }
 
-  // BFS search on ZONE_BOUNDARIES graph
   interface QueueItem {
     mapId: number;
     path: ZoneBoundary[];
   }
 
-  const queue: QueueItem[] = [{ mapId: originMapId, path: [] }];
-  const visited: Set<number> = new Set([originMapId]);
+  const queue: QueueItem[] = [{ mapId: fromMapId, path: [] }];
+  const visited: Set<number> = new Set([fromMapId]);
 
   while (queue.length > 0) {
     const current = queue.shift()!;
 
-    if (current.mapId === targetMap) {
-      return {
-        originMapId,
-        targetPokecenterOutdoorMapId: targetMap,
-        targetPokecenterIndoorMapId: targetPokecenter.indoorMapId,
-        doorCoords: targetPokecenter.doorCoords,
-        boundaries: current.path,
-      };
+    if (current.mapId === toMapId) {
+      return current.path;
     }
 
     const outgoing = ZONE_BOUNDARIES.filter((b) => b.fromMapId === current.mapId);
@@ -306,11 +289,24 @@ export function planMacroRoute(originMapId: number, targetOutdoorMapId?: number)
     }
   }
 
+  return [];
+}
+
+/**
+ * Macro Graph Search (BFS): Computes the sequence of Zone Boundaries to traverse to reach a Pokecenter.
+ */
+export function planMacroRoute(originMapId: number, targetOutdoorMapId?: number): MacroRoutePlan | null {
+  const targetPokecenter = targetOutdoorMapId ? POKECENTERS_REGISTRY[targetOutdoorMapId] || getClosestPokecenterForMap(originMapId) : getClosestPokecenterForMap(originMapId);
+  const targetMap = targetPokecenter.outdoorMapId;
+
+  const boundaries = planMacroRouteBetween(originMapId, targetMap);
+
   return {
     originMapId,
     targetPokecenterOutdoorMapId: targetMap,
     targetPokecenterIndoorMapId: targetPokecenter.indoorMapId,
     doorCoords: targetPokecenter.doorCoords,
-    boundaries: [],
+    boundaries,
   };
 }
+

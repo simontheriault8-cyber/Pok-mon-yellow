@@ -12,7 +12,7 @@ import { POKEMON_YELLOW_RAM, resolveAddr, readPartyStatusFromRAM } from './pokem
 import { readNavigationState, POKEMON_YELLOW_MAPS } from './worldNavigation';
 import { readRamMapData, collisionCache, TileClassification } from './ramMapReader';
 import { AStarPathfinder, StepDirection } from './pathfinder';
-import { planMacroRoute, Direction, PokecenterData, getClosestPokecenterForMap } from './macroNavigation';
+import { planMacroRoute, planMacroRouteBetween, Direction, PokecenterData, getClosestPokecenterForMap } from './macroNavigation';
 
 export type AutoHealStatus =
   | 'idle'
@@ -362,18 +362,73 @@ export class LocalNavigationEngine {
         exitAttempts++;
       }
 
-      // Step 9: Replay Reverse Step History Stack to Return to Training Spot
+      // Step 9: Return to Origin Training Spot using Macro & Micro Navigation!
       if (returnToOrigin && this.originTrainingCoords && this.originTrainingMapId !== null) {
         this.currentStatus = 'returning_to_training';
         const originMapName = POKEMON_YELLOW_MAPS[this.originTrainingMapId] || `Map 0x${this.originTrainingMapId.toString(16)}`;
+
+        // Read current outdoor map
+        nav = readNavigationState(mmu);
+        const currentOutdoorMapId = nav ? nav.currentMapId : pokecenter.outdoorMapId;
+
         this.addLog(
           'return',
-          `🔄 Trajet retour inversé mémorisé (${this.stepHistoryStack.length} pas) vers : ${originMapName} (${this.originTrainingCoords.x}, ${this.originTrainingCoords.y})...`,
+          `🔄 Planification du trajet retour Macro & Micro vers : ${originMapName} (${this.originTrainingCoords.x}, ${this.originTrainingCoords.y})...`,
           this.originTrainingCoords,
           this.originTrainingMapId
         );
 
-        await this.replayReverseStepHistory(mmu);
+        // 1. If currently on a different map than the origin training map, traverse Macro boundaries
+        if (currentOutdoorMapId !== this.originTrainingMapId) {
+          const returnBoundaries = planMacroRouteBetween(currentOutdoorMapId, this.originTrainingMapId);
+          this.addLog('nav', `🗺️ Trajet retour Macro : ${returnBoundaries.length} frontière(s) à franchir`);
+
+          for (let i = 0; i < returnBoundaries.length; i++) {
+            if (!this.isRunning) return false;
+
+            const boundary = returnBoundaries[i];
+            this.addLog(
+              'nav',
+              `🗺️ Étape Macro Retour ${i + 1}/${returnBoundaries.length} : ${boundary.description} ➜ vers (${boundary.fromCoords.x}, ${boundary.fromCoords.y})...`
+            );
+
+            // Micro-navigate with RAM 2D collision A* to the boundary tile
+            const reachedBoundary = await this.microNavigateWithRAM(
+              mmu,
+              boundary.fromCoords.x,
+              boundary.fromCoords.y,
+              boundary.description,
+              false
+            );
+
+            if (!reachedBoundary || !this.isRunning) {
+              this.addLog('error', `❌ Échec de ralliement de la frontière retour : ${boundary.description}`);
+              return false;
+            }
+
+            // Cross boundary with transition direction step
+            this.addLog('nav', `🚪 Franchissement de frontière retour [${boundary.crossingDir.toUpperCase()}]...`);
+            await this.stepDirection(boundary.crossingDir);
+            await this.stepDirection(boundary.crossingDir);
+            await this.wait(700); // Wait for map transition
+          }
+        }
+
+        // 2. Micro-navigate on origin map directly to original training coordinates
+        if (this.isRunning) {
+          this.addLog(
+            'step',
+            `📍 Navigation finale Micro A* vers les coordonnées initiales (${this.originTrainingCoords.x}, ${this.originTrainingCoords.y})...`
+          );
+
+          await this.microNavigateWithRAM(
+            mmu,
+            this.originTrainingCoords.x,
+            this.originTrainingCoords.y,
+            `Point initial (${originMapName})`,
+            false
+          );
+        }
       }
 
       this.currentStatus = 'completed';
@@ -600,10 +655,11 @@ export class LocalNavigationEngine {
   private async interactWithNurse(mmu: any): Promise<void> {
     const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
     let attempts = 0;
-    const maxAttempts = 150;
+    const maxAttempts = 160;
     let healAccepted = false;
-    let healAnimationDetected = false;
     let healAnimationCompleted = false;
+    let seenFarewell = false;
+    let consecutiveBoxClosed = 0;
 
     this.addLog('nurse', '💬 Lancement du dialogue avec l\'Infirmière Joëlle [A]...');
 
@@ -635,29 +691,39 @@ export class LocalNavigationEngine {
 
       // Detect healing music / animation phase (Nurse faces machine, joypad locked)
       if (healAccepted && !healAnimationCompleted) {
-        healAnimationDetected = true;
         this.addLog('nurse', '🎵 Soin en cours sur la machine...');
-        // Wait for heal jingle & light flashes to complete (~2.2 seconds in Gen 1)
-        await this.wait(2300);
+        // Wait for heal jingle & light flashes to complete (~2.4 seconds in Gen 1)
+        await this.wait(2400);
         healAnimationCompleted = true;
-        this.addLog('nurse', '✨ Animation de soin terminée. Clôture des dialogues...');
+        this.addLog('nurse', '✨ Animation de soin terminée. Fermeture des dialogues...');
       }
 
-      // Phase 3 Detection: Closing dialogue ("Your POKéMON are fighting fit!" / "We hope to see you again!")
-      const isOutroText =
-        fullText.includes('FIGHT') ||
-        fullText.includes('FIT') ||
-        fullText.includes('THANK') ||
-        fullText.includes('MERCI') ||
+      // Phase 3 Detection: Farewell message ("We hope to see you again!" / "A bientôt!")
+      if (
         fullText.includes('HOPE') ||
         fullText.includes('REVOIR') ||
-        fullText.includes('AGAIN');
+        fullText.includes('AGAIN') ||
+        fullText.includes('BIENT')
+      ) {
+        seenFarewell = true;
+      }
 
       // EXIT CONDITION:
-      // If healing animation completed (or sufficient dialogue passed) AND text box is gone AND joypad is free
-      if ((healAnimationCompleted || isOutroText || attempts > 15) && !isBoxVisible && joyIgnore === 0) {
-        this.addLog('nurse', '✅ Dialogue terminé, boîte fermée et équipe soignée.');
-        break;
+      // Healing animation completed, we have seen farewell (or many attempts after heal),
+      // AND text box is confirmed closed for at least 3 consecutive cycles with joypad free
+      if (healAnimationCompleted && (seenFarewell || attempts > 22)) {
+        if (!isBoxVisible && joyIgnore === 0) {
+          consecutiveBoxClosed++;
+          if (consecutiveBoxClosed >= 3) {
+            this.addLog('nurse', '✅ Dialogue terminé, boîte fermée et équipe soignée.');
+            break;
+          }
+          await this.wait(120);
+          attempts++;
+          continue;
+        } else {
+          consecutiveBoxClosed = 0;
+        }
       }
 
       // Input Dispatch:
@@ -668,7 +734,7 @@ export class LocalNavigationEngine {
       } else {
         // Phase 3: Outro messages - Advance with [B] to dismiss without re-talking to Nurse Joy
         await this.tapKey('b', 60);
-        await this.wait(160);
+        await this.wait(180);
       }
 
       attempts++;
