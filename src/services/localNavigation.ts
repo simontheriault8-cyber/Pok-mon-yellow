@@ -592,98 +592,89 @@ export class LocalNavigationEngine {
 
   /**
    * Automate Nurse Joy Dialogue Sequence:
-   * 1. Start dialogue with [A] and confirm heal.
-   * 2. Once healing starts/jingle begins, strictly press [B] (never [A]) to advance dialogues without re-triggering.
-   * 3. Once 100% HP is achieved AND no text box is on screen, finish cleanly.
+   * 1. Start dialogue with [A] and confirm "Shall we heal your Pokémon?" with [A].
+   * 2. Wait for healing machine animation / jingle to complete.
+   * 3. Dismiss final messages ("fighting fit", "hope to see you again") with [B] to close cleanly without re-talking.
+   * 4. Exit once text box is closed and joypad is unlocked.
    */
   private async interactWithNurse(mmu: any): Promise<void> {
     const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
     let attempts = 0;
-    const maxAttempts = 120;
-    let healStarted = false;
-    let healFinished = false;
+    const maxAttempts = 150;
+    let healAccepted = false;
+    let healAnimationDetected = false;
+    let healAnimationCompleted = false;
 
-    // Step 1: Trigger dialogue with Nurse Joy (Press A facing UP)
-    await this.tapKey('a', 90);
-    await this.wait(300);
+    this.addLog('nurse', '💬 Lancement du dialogue avec l\'Infirmière Joëlle [A]...');
+
+    // Step 1: Open dialogue by pressing A facing UP towards Nurse Joy
+    await this.tapKey('a', 80);
+    await this.wait(250);
 
     while (attempts < maxAttempts && this.isRunning) {
       const joyIgnore = mmu.read(joyIgnoreAddr);
+      const isBoxVisible = this.isTextBoxActiveOnScreen(mmu);
 
-      // Check current party HP in RAM
-      const party = readPartyStatusFromRAM(mmu);
-      const isPartyFullHp =
-        party.isValid &&
-        party.aliveMons === party.totalMons &&
-        party.monsHp.length > 0 &&
-        party.monsHp.every((m) => m.curHp === m.maxHp);
-
-      if (isPartyFullHp) {
-        healFinished = true;
-      }
-
-      // Read screen lines to check dialogue content
+      // Read screen lines to monitor dialog text
       const screenLines: string[] = [];
       for (let r = 12; r <= 17; r++) {
         screenLines.push(this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase());
       }
       const fullText = screenLines.join(' ');
 
-      // Detect when healing phase has commenced
+      // Phase 2 Detection: Nurse accepted Pokemon ("OK, we'll need your POKéMON" / "Très bien. Confiez-moi...")
       if (
         fullText.includes('NEED') ||
         fullText.includes('CONFIEZ') ||
-        fullText.includes('OK') ||
-        fullText.includes('HEAL') ||
-        fullText.includes('SOIGNER')
+        fullText.includes('TAKE') ||
+        fullText.includes('ATTENDU') ||
+        fullText.includes('PATIENT')
       ) {
-        healStarted = true;
+        healAccepted = true;
       }
 
-      const isBoxVisible = this.isTextBoxActiveOnScreen(mmu);
+      // Detect healing music / animation phase (Nurse faces machine, joypad locked)
+      if (healAccepted && !healAnimationCompleted) {
+        healAnimationDetected = true;
+        this.addLog('nurse', '🎵 Soin en cours sur la machine...');
+        // Wait for heal jingle & light flashes to complete (~2.2 seconds in Gen 1)
+        await this.wait(2300);
+        healAnimationCompleted = true;
+        this.addLog('nurse', '✨ Animation de soin terminée. Clôture des dialogues...');
+      }
+
+      // Phase 3 Detection: Closing dialogue ("Your POKéMON are fighting fit!" / "We hope to see you again!")
+      const isOutroText =
+        fullText.includes('FIGHT') ||
+        fullText.includes('FIT') ||
+        fullText.includes('THANK') ||
+        fullText.includes('MERCI') ||
+        fullText.includes('HOPE') ||
+        fullText.includes('REVOIR') ||
+        fullText.includes('AGAIN');
 
       // EXIT CONDITION:
-      // Health is 100% restored, we went through the dialogue (healStarted or attempts > 8),
-      // NO text box / dialogue remains on screen, and Joypad is fully unlocked.
-      if (healFinished && (healStarted || attempts > 8) && !isBoxVisible && joyIgnore === 0) {
-        this.addLog('nurse', '✅ Soin terminé et boîte de dialogue totalement fermée.');
+      // If healing animation completed (or sufficient dialogue passed) AND text box is gone AND joypad is free
+      if ((healAnimationCompleted || isOutroText || attempts > 15) && !isBoxVisible && joyIgnore === 0) {
+        this.addLog('nurse', '✅ Dialogue terminé, boîte fermée et équipe soignée.');
         break;
       }
 
       // Input Dispatch:
-      if (joyIgnore > 0) {
-        // Game Boy is busy (scrolling text, fading, or playing heal jingle)
-        if (healStarted && !healFinished) {
-          // Waiting for heal jingle to finish
-          await this.wait(200);
-        } else {
-          // Advance scrolling with [B] if healing started, or [A] before heal starts
-          if (healStarted || healFinished) {
-            await this.tapKey('b', 50);
-            await this.wait(100);
-          } else {
-            await this.tapKey('a', 50);
-            await this.wait(100);
-          }
-        }
+      if (!healAccepted && !healAnimationCompleted) {
+        // Phase 1: Advance "Welcome" and confirm "Shall we heal?" with [A]
+        await this.tapKey('a', 60);
+        await this.wait(180);
       } else {
-        // Joypad is waiting for player input
-        if (healStarted || healFinished) {
-          // STRICT RULE: Once healing has started, ONLY press [B] to dismiss pages and close box
-          // This completely prevents re-talking to Nurse Joy accidentally!
-          await this.tapKey('b', 60);
-          await this.wait(160);
-        } else {
-          // Before healing starts: Confirm "Shall we heal your Pokémon?" with [A]
-          await this.tapKey('a', 60);
-          await this.wait(180);
-        }
+        // Phase 3: Outro messages - Advance with [B] to dismiss without re-talking to Nurse Joy
+        await this.tapKey('b', 60);
+        await this.wait(160);
       }
 
       attempts++;
     }
 
-    // Final safety: ensure no residual Joypad lock
+    // Safety cleanup: dismiss any residual popup
     for (let k = 0; k < 3; k++) {
       if (this.isTextBoxActiveOnScreen(mmu) || mmu.read(joyIgnoreAddr) > 0) {
         await this.tapKey('b', 50);
