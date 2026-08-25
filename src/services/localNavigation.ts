@@ -649,8 +649,8 @@ export class LocalNavigationEngine {
    * Automate Nurse Joy Dialogue Sequence:
    * 1. Start dialogue with [A] and confirm "Shall we heal your Pokémon?" with [A].
    * 2. Wait for healing machine animation / jingle to complete.
-   * 3. Dismiss final messages ("fighting fit", "hope to see you again") with [B] to close cleanly without re-talking.
-   * 4. Exit once text box is closed and joypad is unlocked.
+   * 3. Dismiss final messages ("fighting fit", "hope to see you again") by pulsing [B] until text box is 100% closed.
+   * 4. Ensure character joypad is completely free before returning.
    */
   private async interactWithNurse(mmu: any): Promise<void> {
     const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
@@ -658,8 +658,6 @@ export class LocalNavigationEngine {
     const maxAttempts = 160;
     let healAccepted = false;
     let healAnimationCompleted = false;
-    let seenFarewell = false;
-    let consecutiveBoxClosed = 0;
 
     this.addLog('nurse', '💬 Lancement du dialogue avec l\'Infirmière Joëlle [A]...');
 
@@ -698,56 +696,41 @@ export class LocalNavigationEngine {
         this.addLog('nurse', '✨ Animation de soin terminée. Fermeture des dialogues...');
       }
 
-      // Phase 3 Detection: Farewell message ("We hope to see you again!" / "A bientôt!")
-      if (
-        fullText.includes('HOPE') ||
-        fullText.includes('REVOIR') ||
-        fullText.includes('AGAIN') ||
-        fullText.includes('BIENT')
-      ) {
-        seenFarewell = true;
-      }
-
       // EXIT CONDITION:
-      // Healing animation completed, we have seen farewell (or many attempts after heal),
-      // AND text box is confirmed closed for at least 3 consecutive cycles with joypad free
-      if (healAnimationCompleted && (seenFarewell || attempts > 22)) {
-        if (!isBoxVisible && joyIgnore === 0) {
-          consecutiveBoxClosed++;
-          if (consecutiveBoxClosed >= 3) {
-            this.addLog('nurse', '✅ Dialogue terminé, boîte fermée et équipe soignée.');
-            break;
-          }
-          await this.wait(120);
-          attempts++;
-          continue;
-        } else {
-          consecutiveBoxClosed = 0;
-        }
+      // Healing animation is completed, no text box remains on screen, and Game Boy joypad is fully unlocked
+      if (healAnimationCompleted && !isBoxVisible && joyIgnore === 0 && attempts > 10) {
+        this.addLog('nurse', '✅ Dialogue terminé, boîte fermée et équipe soignée.');
+        break;
       }
 
       // Input Dispatch:
       if (!healAccepted && !healAnimationCompleted) {
         // Phase 1: Advance "Welcome" and confirm "Shall we heal?" with [A]
-        await this.tapKey('a', 60);
-        await this.wait(180);
+        await this.tapKey('a', 70);
+        await this.wait(160);
       } else {
-        // Phase 3: Outro messages - Advance with [B] to dismiss without re-talking to Nurse Joy
-        await this.tapKey('b', 60);
-        await this.wait(180);
+        // Phase 3: Outro messages ("fighting fit", "hope to see you again")
+        // Pulse [B] to dismiss without re-talking to Nurse Joy
+        await this.tapKey('b', 70);
+        await this.wait(160);
       }
 
       attempts++;
     }
 
-    // Safety cleanup: dismiss any residual popup
-    for (let k = 0; k < 3; k++) {
-      if (this.isTextBoxActiveOnScreen(mmu) || mmu.read(joyIgnoreAddr) > 0) {
-        await this.tapKey('b', 50);
-        await this.wait(120);
+    // Safety cleanup: Keep pulsing [B] until no text box remains at all and joypad is free
+    let cleanupCycles = 0;
+    while (this.isRunning && cleanupCycles < 15) {
+      const isBoxVisible = this.isTextBoxActiveOnScreen(mmu);
+      const joyIgnore = mmu.read(joyIgnoreAddr);
+      if (!isBoxVisible && joyIgnore === 0) {
+        break;
       }
+      await this.tapKey('b', 70);
+      await this.wait(140);
+      cleanupCycles++;
     }
-    await this.wait(200);
+    await this.wait(100);
   }
 
   // --- Low-Level Joypad & RAM Step Helpers ---
