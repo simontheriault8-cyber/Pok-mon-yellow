@@ -935,9 +935,13 @@ export class SimpleTrainerBot {
           await this.tapKey('left', 60);
           await this.wait(80);
         } else {
-          // Unknown position: Reset to top-left
-          await this.tapKey('up', 50);
-          await this.wait(50);
+          // Si position indéterminée, on ne touche à rien ou juste une impulsion de sécurité vers la gauche
+          // pour éviter tout appui parasite sur [HAUT] qui pourrait faire boucler les attaques
+          const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
+          if (topY === 14 || topY === 6) {
+            await this.tapKey('up', 50);
+            await this.wait(60);
+          }
           await this.tapKey('left', 50);
           await this.wait(70);
         }
