@@ -846,30 +846,57 @@ export class SimpleTrainerBot {
     const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
 
     // 1. Direct Tilemap inspection for cursor arrow (▶ = 0xED)
-    // Row 14 (Top row: FIGHT / PKMN)
-    const r14 = base + 14 * 20;
-    if (mmu.read(r14 + 8) === 0xED || mmu.read(r14 + 9) === 0xED) return 'FIGHT';
-    if (mmu.read(r14 + 14) === 0xED || mmu.read(r14 + 15) === 0xED) return 'PKMN';
-
-    // Row 16 (Bottom row: ITEM / RUN)
-    const r16 = base + 16 * 20;
-    if (mmu.read(r16 + 8) === 0xED || mmu.read(r16 + 9) === 0xED) return 'ITEM';
-    if (mmu.read(r16 + 14) === 0xED || mmu.read(r16 + 15) === 0xED) return 'RUN';
-
-    // 2. RAM coordinates fallback
-    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
-    const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
-    const cursor = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu));
-
-    if (topY === 12 || topY === 4) {
-      if (topX >= 13 || cursor === 1) return 'PKMN';
-      if (topX <= 10 || cursor === 0) return 'FIGHT';
-    } else if (topY === 14 || topY === 6) {
-      if (topX <= 10 || cursor === 2) return 'ITEM';
-      if (topX >= 13 || cursor === 3) return 'RUN';
+    // Rows 13 and 14 (Top row: FIGHT / PKMN)
+    for (const r of [13, 14]) {
+      const rBase = base + r * 20;
+      for (let c = 8; c <= 11; c++) {
+        if (mmu.read(rBase + c) === 0xED) return 'FIGHT';
+      }
+      for (let c = 14; c <= 17; c++) {
+        if (mmu.read(rBase + c) === 0xED) return 'PKMN';
+      }
     }
 
+    // Rows 15 and 16 (Bottom row: ITEM / RUN)
+    for (const r of [15, 16]) {
+      const rBase = base + r * 20;
+      for (let c = 8; c <= 11; c++) {
+        if (mmu.read(rBase + c) === 0xED) return 'ITEM';
+      }
+      for (let c = 14; c <= 17; c++) {
+        if (mmu.read(rBase + c) === 0xED) return 'RUN';
+      }
+    }
+
+    // 2. RAM coordinates fallback
+    const cursor = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu));
+    if (cursor === 0) return 'FIGHT';
+    if (cursor === 1) return 'PKMN';
+    if (cursor === 2) return 'ITEM';
+    if (cursor === 3) return 'RUN';
+
     return 'UNKNOWN';
+  }
+
+  /**
+   * Read the exact cursor position in the Attack / Move selection sub-menu (0..3).
+   * Move 1 (Slot 0): Row 4
+   * Move 2 (Slot 1): Row 6
+   * Move 3 (Slot 2): Row 8
+   * Move 4 (Slot 3): Row 10
+   */
+  private getMoveSubMenuCursor(mmu: any): number {
+    const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
+    for (let slot = 0; slot < 4; slot++) {
+      const row = 4 + slot * 2;
+      for (let col = 3; col <= 5; col++) {
+        if (mmu.read(base + row * 20 + col) === 0xED) {
+          return slot;
+        }
+      }
+    }
+    const cursor = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu));
+    return (cursor >= 0 && cursor <= 3) ? cursor : 0;
   }
 
   /**
@@ -916,9 +943,7 @@ export class SimpleTrainerBot {
           await this.tapKey('up', 60);
           await this.wait(80);
         } else {
-          // Unknown position: Reset to top-right
-          await this.tapKey('up', 50);
-          await this.wait(50);
+          // Position indéterminée : tentative vers la droite
           await this.tapKey('right', 50);
           await this.wait(70);
         }
@@ -935,13 +960,7 @@ export class SimpleTrainerBot {
           await this.tapKey('left', 60);
           await this.wait(80);
         } else {
-          // Si position indéterminée, on ne touche à rien ou juste une impulsion de sécurité vers la gauche
-          // pour éviter tout appui parasite sur [HAUT] qui pourrait faire boucler les attaques
-          const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
-          if (topY === 14 || topY === 6) {
-            await this.tapKey('up', 50);
-            await this.wait(60);
-          }
+          // Position indéterminée : juste une impulsion vers la gauche (JAMAIS vers le HAUT pour éviter les bugs)
           await this.tapKey('left', 50);
           await this.wait(70);
         }
@@ -1323,12 +1342,9 @@ export class SimpleTrainerBot {
    * before pressing [A]. Never presses UP when already at Slot 0 to prevent menu wrap-around!
    */
   private async selectMoveInSubMenu(mmu: any, targetSlot: number): Promise<void> {
-    const cursorAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu);
-
     // Re-verify and adjust position if not strictly on targetSlot
     for (let attempt = 0; attempt < 4; attempt++) {
-      let currentSlot = mmu.read(cursorAddr);
-      if (currentSlot > 3) currentSlot = 0;
+      const currentSlot = this.getMoveSubMenuCursor(mmu);
 
       if (currentSlot === targetSlot) {
         break;
@@ -1336,10 +1352,16 @@ export class SimpleTrainerBot {
 
       if (currentSlot < targetSlot) {
         await this.tapKey('down', 50);
-        await this.wait(60);
+        await this.wait(70);
       } else if (currentSlot > targetSlot) {
-        await this.tapKey('up', 50);
-        await this.wait(60);
+        if (targetSlot === 0 && currentSlot === 3) {
+          // Wrap-around forward from 3 to 0
+          await this.tapKey('down', 50);
+          await this.wait(70);
+        } else {
+          await this.tapKey('up', 50);
+          await this.wait(70);
+        }
       }
     }
 
