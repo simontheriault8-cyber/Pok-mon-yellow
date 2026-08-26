@@ -880,21 +880,28 @@ export class SimpleTrainerBot {
 
   /**
    * Read the exact cursor position in the Attack / Move selection sub-menu (0..3).
-   * Move 1 (Slot 0): Row 4
-   * Move 2 (Slot 1): Row 6
-   * Move 3 (Slot 2): Row 8
-   * Move 4 (Slot 3): Row 10
+   * In Gen 1 Battle screen:
+   *   Row 14: Move 1 (Slot 0)
+   *   Row 15: Move 2 (Slot 1)
+   *   Row 16: Move 3 (Slot 2)
+   *   Row 17: Move 4 (Slot 3)
+   * Tile value 0xED is the arrow cursor (▶).
    */
   private getMoveSubMenuCursor(mmu: any): number {
     const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
+
+    // 1. Direct Tilemap inspection on rows 14..17
     for (let slot = 0; slot < 4; slot++) {
-      const row = 4 + slot * 2;
-      for (let col = 3; col <= 5; col++) {
-        if (mmu.read(base + row * 20 + col) === 0xED) {
+      const row = 14 + slot;
+      const rBase = base + row * 20;
+      for (let col = 1; col <= 8; col++) {
+        if (mmu.read(rBase + col) === 0xED) {
           return slot;
         }
       }
     }
+
+    // 2. RAM coordinates fallback (wCurrentMenuItem at 0xCC26)
     const cursor = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu));
     return (cursor >= 0 && cursor <= 3) ? cursor : 0;
   }
@@ -1342,26 +1349,44 @@ export class SimpleTrainerBot {
    * before pressing [A]. Never presses UP when already at Slot 0 to prevent menu wrap-around!
    */
   private async selectMoveInSubMenu(mmu: any, targetSlot: number): Promise<void> {
-    // Re-verify and adjust position if not strictly on targetSlot
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const currentSlot = this.getMoveSubMenuCursor(mmu);
+    const currentSlot = this.getMoveSubMenuCursor(mmu);
 
-      if (currentSlot === targetSlot) {
+    if (targetSlot === 0) {
+      if (currentSlot === 0) {
+        // Déjà positionné sur la 1ère attaque (Slot 1) : Validation immédiate avec [A], aucun appui directionnel !
+        await this.tapKey('a', 80);
+        await this.wait(150);
+        return;
+      } else if (currentSlot === 1) {
+        await this.tapKey('up', 50);
+        await this.wait(80);
+      } else if (currentSlot === 2) {
+        await this.tapKey('up', 50);
+        await this.wait(60);
+        await this.tapKey('up', 50);
+        await this.wait(80);
+      } else if (currentSlot === 3) {
+        // Du Slot 4 au Slot 1 : un seul coup vers le bas fait le tour vers le Slot 1
+        await this.tapKey('down', 50);
+        await this.wait(80);
+      }
+      await this.tapKey('a', 80);
+      await this.wait(150);
+      return;
+    }
+
+    // Si targetSlot > 0 (ex: Slot 1 n'a plus de PP)
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const cur = this.getMoveSubMenuCursor(mmu);
+      if (cur === targetSlot) {
         break;
       }
-
-      if (currentSlot < targetSlot) {
+      if (cur < targetSlot) {
         await this.tapKey('down', 50);
         await this.wait(70);
-      } else if (currentSlot > targetSlot) {
-        if (targetSlot === 0 && currentSlot === 3) {
-          // Wrap-around forward from 3 to 0
-          await this.tapKey('down', 50);
-          await this.wait(70);
-        } else {
-          await this.tapKey('up', 50);
-          await this.wait(70);
-        }
+      } else if (cur > targetSlot) {
+        await this.tapKey('up', 50);
+        await this.wait(70);
       }
     }
 
