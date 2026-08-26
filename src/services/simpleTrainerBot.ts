@@ -409,6 +409,14 @@ export class SimpleTrainerBot {
 
         // Mode Entraînement Premier Pokémon : Switch au Tour 1 vers le dernier Pokémon vivant de l'équipe
         if (this.mode === 'train_slot_1' && !this.hasSwitchedToLastMonInCurrentBattle && curBattleHp > 0) {
+          // Si le sac d'objets est ouvert, le fermer immédiatement
+          if (this.isItemBagOpen(mmu)) {
+            await this.tapKey('b', 70);
+            await this.wait(140);
+            this.scheduleNextTick(100);
+            return;
+          }
+
           // Trouver le dernier Pokémon vivant dans l'équipe (index > 0)
           let lastAliveIndex = -1;
           for (let i = partyStatus.monsHp.length - 1; i >= 1; i--) {
@@ -774,12 +782,12 @@ export class SimpleTrainerBot {
    * Helper to check if the standard 2x2 battle menu (FIGHT / PKMN / ITEM / RUN) is actively drawn on the screen.
    */
   private isBattleMenu2x2Visible(mmu: any): boolean {
-    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
-    const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
     const joyIgnore = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu));
-
     // Si la Game Boy ignore les touches (animation/fondu), le menu n'est pas encore interactif
     if (joyIgnore > 0) return false;
+
+    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
+    const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
 
     // Détection par coordonnées du curseur de menu 2x2 en RAM (Y=12 ou 14, X=9, 1 ou 15)
     // S'assurer qu'on n'est pas dans le sous-menu d'attaques (qui a TopMenuX = 4 ou 5)
@@ -803,6 +811,140 @@ export class SimpleTrainerBot {
       }
     }
     return false;
+  }
+
+  /**
+   * Helper to detect if the Item Bag / Sac d'objets menu is currently opened.
+   */
+  private isItemBagOpen(mmu: any): boolean {
+    if (this.isPartyScreenVisible(mmu)) return false;
+
+    let screenText = '';
+    for (let r = 2; r <= 14; r++) {
+      const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
+      if (line) screenText += ' ' + line;
+    }
+
+    // Signature keywords for the Item inventory menu in Gen 1
+    const hasItemKeywords =
+      (screenText.includes('ITEM') || screenText.includes('OBJET') || screenText.includes('BAG') || screenText.includes('SAC')) &&
+      (screenText.includes('CANCEL') || screenText.includes('RETOUR') || screenText.includes('TOSS') || screenText.includes('USE') || screenText.includes('BALL') || screenText.includes('POTION'));
+
+    const diag = this.getScreenDialogueText(mmu);
+    const hasBagAction = diag.line1.includes('USE') || diag.line1.includes('TOSS') || diag.line1.includes('UTIL') || diag.line1.includes('JETER');
+
+    return hasItemKeywords || hasBagAction;
+  }
+
+  /**
+   * Read the exact cursor position in the 2x2 Battle Menu.
+   * Layout in Gen 1:
+   *   [Top-Left: FIGHT/ATTAQ]    [Top-Right: PKMN]
+   *   [Bottom-Left: ITEM/OBJET]  [Bottom-Right: RUN/FUITE]
+   */
+  private getBattleMenu2x2Cursor(mmu: any): 'FIGHT' | 'PKMN' | 'ITEM' | 'RUN' | 'UNKNOWN' {
+    const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
+
+    // 1. Direct Tilemap inspection for cursor arrow (▶ = 0xED)
+    // Row 14 (Top row: FIGHT / PKMN)
+    const r14 = base + 14 * 20;
+    if (mmu.read(r14 + 8) === 0xED || mmu.read(r14 + 9) === 0xED) return 'FIGHT';
+    if (mmu.read(r14 + 14) === 0xED || mmu.read(r14 + 15) === 0xED) return 'PKMN';
+
+    // Row 16 (Bottom row: ITEM / RUN)
+    const r16 = base + 16 * 20;
+    if (mmu.read(r16 + 8) === 0xED || mmu.read(r16 + 9) === 0xED) return 'ITEM';
+    if (mmu.read(r16 + 14) === 0xED || mmu.read(r16 + 15) === 0xED) return 'RUN';
+
+    // 2. RAM coordinates fallback
+    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
+    const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
+    const cursor = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu));
+
+    if (topY === 12 || topY === 4) {
+      if (topX >= 13 || cursor === 1) return 'PKMN';
+      if (topX <= 10 || cursor === 0) return 'FIGHT';
+    } else if (topY === 14 || topY === 6) {
+      if (topX <= 10 || cursor === 2) return 'ITEM';
+      if (topX >= 13 || cursor === 3) return 'RUN';
+    }
+
+    return 'UNKNOWN';
+  }
+
+  /**
+   * Verified Cursor Navigation in 2x2 Battle Menu:
+   * Moves the cursor to the specified target ('FIGHT' or 'PKMN') and guarantees
+   * that the cursor is STRICTLY on target before returning true.
+   * If on ITEM or wrong position, adjusts direction and NEVER validates on ITEM.
+   */
+  private async ensureBattleMenu2x2Cursor(mmu: any, target: 'FIGHT' | 'PKMN'): Promise<boolean> {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      // If Item bag is open, cancel back with [B]
+      if (this.isItemBagOpen(mmu)) {
+        this.addLog('safety', '🛡️ Menu Objets détecté par inadvertance -> Fermeture immédiate [B]');
+        await this.tapKey('b', 70);
+        await this.wait(140);
+        continue;
+      }
+
+      // If attack sub-menu is open, cancel back to 2x2 menu with [B]
+      const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
+      if (topX === 4 || topX === 5) {
+        await this.tapKey('b', 60);
+        await this.wait(100);
+        continue;
+      }
+
+      const curPos = this.getBattleMenu2x2Cursor(mmu);
+
+      if (curPos === target) {
+        // Cursor confirmed on target!
+        return true;
+      }
+
+      if (target === 'PKMN') {
+        if (curPos === 'FIGHT') {
+          await this.tapKey('right', 60);
+          await this.wait(80);
+        } else if (curPos === 'ITEM') {
+          await this.tapKey('up', 60);
+          await this.wait(60);
+          await this.tapKey('right', 60);
+          await this.wait(80);
+        } else if (curPos === 'RUN') {
+          await this.tapKey('up', 60);
+          await this.wait(80);
+        } else {
+          // Unknown position: Reset to top-right
+          await this.tapKey('up', 50);
+          await this.wait(50);
+          await this.tapKey('right', 50);
+          await this.wait(70);
+        }
+      } else if (target === 'FIGHT') {
+        if (curPos === 'PKMN') {
+          await this.tapKey('left', 60);
+          await this.wait(80);
+        } else if (curPos === 'ITEM') {
+          await this.tapKey('up', 60);
+          await this.wait(80);
+        } else if (curPos === 'RUN') {
+          await this.tapKey('up', 60);
+          await this.wait(60);
+          await this.tapKey('left', 60);
+          await this.wait(80);
+        } else {
+          // Unknown position: Reset to top-left
+          await this.tapKey('up', 50);
+          await this.wait(50);
+          await this.tapKey('left', 50);
+          await this.wait(70);
+        }
+      }
+    }
+
+    return this.getBattleMenu2x2Cursor(mmu) === target;
   }
 
   /**
@@ -885,33 +1027,23 @@ export class SimpleTrainerBot {
           break;
         }
 
-        // Dans le menu 2x2 standard (FIGHT / PKMN / ITEM / RUN) :
-        // 1. Repositionner en haut (sur la ligne FIGHT / PKMN)
-        await this.tapKey('up', 50);
-        await this.wait(60);
-
-        // 2. Aller à droite vers l'option PKMN
-        await this.tapKey('right', 60);
-        await this.wait(80);
-
-        // 3. Valider avec [A] pour ouvrir l'équipe
-        await this.tapKey('a', 70);
-        await this.wait(220);
-
-        if (this.isPartyScreenVisible(mmu)) {
-          partyMenuReady = true;
-          break;
+        // Si le sac d'objets est ouvert par mégarde, le fermer immédiatement avec [B]
+        if (this.isItemBagOpen(mmu)) {
+          this.addLog('safety', '🛡️ Fermeture automatique du sac d\'objets [B]');
+          await this.tapKey('b', 70);
+          await this.wait(140);
         }
 
-        // En cas de disposition alternative :
-        await this.tapKey('b', 60);
-        await this.wait(80);
-        await this.tapKey('left', 50);
-        await this.wait(60);
-        await this.tapKey('down', 60);
-        await this.wait(80);
-        await this.tapKey('a', 70);
-        await this.wait(220);
+        // Vérification et alignement strict du curseur sur PKMN avant d'appuyer sur A
+        const isAlignedOnPkmn = await this.ensureBattleMenu2x2Cursor(mmu, 'PKMN');
+        if (isAlignedOnPkmn) {
+          await this.tapKey('a', 70);
+          await this.wait(220);
+        } else {
+          // Si le curseur n'est pas encore sur PKMN, fermer toute boîte avec B et retenter
+          await this.tapKey('b', 60);
+          await this.wait(100);
+        }
 
         if (this.isPartyScreenVisible(mmu)) {
           partyMenuReady = true;
@@ -1151,18 +1283,46 @@ export class SimpleTrainerBot {
       }
     }
 
-    // If target slot is Slot 1 (standard default):
-    if (targetSlot === 0 || !foundValidMove) {
+    // Si le sac d'objets est ouvert par inadvertance en combat, le fermer immédiatement
+    if (this.isItemBagOpen(mmu)) {
+      this.addLog('safety', '🛡️ Sac d\'objets détecté en combat -> Fermeture immédiate [B]');
+      await this.tapKey('b', 70);
+      await this.wait(140);
+      return;
+    }
+
+    // Si le menu principal de combat 2x2 est affiché : s'assurer formellement d'être sur FIGHT avant d'appuyer sur A
+    if (this.isBattleMenu2x2Visible(mmu)) {
+      const isAlignedOnFight = await this.ensureBattleMenu2x2Cursor(mmu, 'FIGHT');
+      if (isAlignedOnFight) {
+        await this.tapKey('a', 70);
+        await this.wait(150);
+      }
+      return;
+    }
+
+    // Si nous sommes dans le sous-menu de sélection des 4 attaques
+    const topXAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu);
+    const topX = mmu.read(topXAddr);
+    if (topX === 4 || topX === 5) {
+      if (targetSlot === 0 || !foundValidMove) {
+        await this.tapKey('up', 40);
+        await this.wait(30);
+        await this.tapKey('a', 80);
+        return;
+      }
+
+      // Si le slot cible est 2, 3 ou 4 (car le Slot 1 n'a plus de PP) :
+      for (let i = 0; i < targetSlot; i++) {
+        await this.tapKey('down', 60);
+        await this.wait(40);
+      }
       await this.tapKey('a', 80);
       return;
     }
 
-    // If target slot is Slot 2, 3, or 4 (because Slot 1 has 0 PP):
-    for (let i = 0; i < targetSlot; i++) {
-      await this.tapKey('down', 60);
-      await this.wait(40);
-    }
-    await this.tapKey('a', 80);
+    // Si des dialogues défilent ou des animations se jouent :
+    await this.tapKey('a', 70);
   }
 
   /**

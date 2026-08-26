@@ -890,6 +890,24 @@ export class LocalNavigationEngine {
   }
 
   /**
+   * Helper to detect if the Item Bag / Sac d'objets menu is currently opened.
+   */
+  private isItemBagOpen(mmu: any): boolean {
+    if (this.isPartyScreenVisible(mmu)) return false;
+
+    let screenText = '';
+    for (let r = 2; r <= 14; r++) {
+      const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
+      if (line) screenText += ' ' + line;
+    }
+
+    return (
+      (screenText.includes('ITEM') || screenText.includes('OBJET') || screenText.includes('BAG') || screenText.includes('SAC')) &&
+      (screenText.includes('CANCEL') || screenText.includes('RETOUR') || screenText.includes('TOSS') || screenText.includes('USE') || screenText.includes('BALL') || screenText.includes('POTION'))
+    );
+  }
+
+  /**
    * Helper to check if the party selection screen (6 Pokemon list) is actively drawn on screen.
    */
   private isPartyScreenVisible(mmu: any): boolean {
@@ -981,6 +999,14 @@ export class LocalNavigationEngine {
         continue;
       }
 
+      // If Item bag is open, cancel back with B
+      if (this.isItemBagOpen(mmu)) {
+        await this.tapKey('b', 60);
+        await this.wait(100);
+        attempts++;
+        continue;
+      }
+
       // If in party screen or attack screen, cancel back with B
       const topX = mmu.read(topMenuXAddr);
       if (this.isPartyScreenVisible(mmu) || topX === 4 || topX === 5) {
@@ -994,13 +1020,20 @@ export class LocalNavigationEngine {
       if (this.isBattleMenu2x2Visible(mmu)) {
         // 1. Move cursor Down (to ITEM / RUN row)
         await this.tapKey('down', 50);
-        await this.wait(60);
+        await this.wait(50);
         if (!this.isBattleActive(mmu)) break;
 
         // 2. Move cursor Right (to RUN column)
         await this.tapKey('right', 50);
-        await this.wait(60);
+        await this.wait(50);
         if (!this.isBattleActive(mmu)) break;
+
+        // Verify we are not in bag
+        if (this.isItemBagOpen(mmu)) {
+          await this.tapKey('b', 60);
+          await this.wait(80);
+          continue;
+        }
 
         // 3. Press A to trigger FLEE (FUITE / RUN)
         await this.tapKey('a', 60);
