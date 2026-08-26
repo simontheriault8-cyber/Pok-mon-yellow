@@ -786,30 +786,53 @@ export class SimpleTrainerBot {
     // Si la Game Boy ignore les touches (animation/fondu), le menu n'est pas encore interactif
     if (joyIgnore > 0) return false;
 
+    // Si le sous-menu d'attaques (avec TYPE/) est affiché, ce n'est PAS le menu 2x2
+    if (this.isMoveSubMenuVisible(mmu)) {
+      return false;
+    }
+
     const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
     const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
+    const maxItem = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu));
 
-    // Détection par coordonnées du curseur de menu 2x2 en RAM (Y=12 ou 14, X=9, 1 ou 15)
-    // S'assurer qu'on n'est pas dans le sous-menu d'attaques (qui a TopMenuX = 4 ou 5)
-    if ((topY === 12 || topY === 14) && (topX === 9 || topX === 1 || topX === 15)) {
+    // Dans le menu 2x2, maxItem vaut 1 (2 lignes verticales)
+    if (maxItem === 1 && (topY === 12 || topY === 14) && (topX === 9 || topX === 1 || topX === 15 || topX === 8)) {
       return true;
     }
 
-    // Détection de secours par inspection des lignes 12 à 17 de la Tilemap écran (0xC3A0)
+    // Inspection Tilemap de secours pour les mots-clés du menu 2x2
+    let hasFight = false;
+    let hasPkmn = false;
     for (let r = 12; r <= 17; r++) {
       const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
-      if (
-        line.includes('FIGHT') ||
-        line.includes('PKMN') ||
-        line.includes('ATTAQ') ||
-        line.includes('ITEM') ||
-        line.includes('RUN') ||
-        line.includes('OBJET') ||
-        line.includes('FUITE')
-      ) {
+      if (line.includes('FIGHT') || line.includes('ATTAQ')) hasFight = true;
+      if (line.includes('PKMN') || line.includes('POKÉMON') || line.includes('POKEMON')) hasPkmn = true;
+    }
+    return hasFight && hasPkmn;
+  }
+
+  /**
+   * Helper to check if the 4-moves selection sub-menu is currently open on screen (showing TYPE/ and moves).
+   */
+  private isMoveSubMenuVisible(mmu: any): boolean {
+    const joyIgnore = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu));
+    if (joyIgnore > 0) return false;
+
+    // Dans le sous-menu d'attaque, la boîte de dialogue affiche "TYPE/" ou "TYPE" aux lignes 12 ou 13
+    for (let r = 12; r <= 14; r++) {
+      const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
+      if (line.includes('TYPE/') || line.includes('TYPE')) {
         return true;
       }
     }
+
+    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
+    const maxItem = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu));
+    // Si maxItem > 1 (3 pour 4 attaques) et topY est 4 ou 12
+    if (maxItem > 1 && (topY === 4 || topY === 12 || topY === 13)) {
+      return true;
+    }
+
     return false;
   }
 
@@ -849,10 +872,10 @@ export class SimpleTrainerBot {
     // Rows 13 and 14 (Top row: FIGHT / PKMN)
     for (const r of [13, 14]) {
       const rBase = base + r * 20;
-      for (let c = 8; c <= 11; c++) {
+      for (let c = 7; c <= 11; c++) {
         if (mmu.read(rBase + c) === 0xED) return 'FIGHT';
       }
-      for (let c = 14; c <= 17; c++) {
+      for (let c = 13; c <= 17; c++) {
         if (mmu.read(rBase + c) === 0xED) return 'PKMN';
       }
     }
@@ -860,41 +883,42 @@ export class SimpleTrainerBot {
     // Rows 15 and 16 (Bottom row: ITEM / RUN)
     for (const r of [15, 16]) {
       const rBase = base + r * 20;
-      for (let c = 8; c <= 11; c++) {
+      for (let c = 7; c <= 11; c++) {
         if (mmu.read(rBase + c) === 0xED) return 'ITEM';
       }
-      for (let c = 14; c <= 17; c++) {
+      for (let c = 13; c <= 17; c++) {
         if (mmu.read(rBase + c) === 0xED) return 'RUN';
       }
     }
 
     // 2. RAM coordinates fallback
-    const cursor = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu));
-    if (cursor === 0) return 'FIGHT';
-    if (cursor === 1) return 'PKMN';
-    if (cursor === 2) return 'ITEM';
-    if (cursor === 3) return 'RUN';
+    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
+    const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
 
-    return 'UNKNOWN';
+    if (topY <= 13) {
+      return topX >= 13 ? 'PKMN' : 'FIGHT';
+    } else {
+      return topX >= 13 ? 'RUN' : 'ITEM';
+    }
   }
 
   /**
    * Read the exact cursor position in the Attack / Move selection sub-menu (0..3).
    * In Gen 1 Battle screen:
-   *   Row 14: Move 1 (Slot 0)
-   *   Row 15: Move 2 (Slot 1)
-   *   Row 16: Move 3 (Slot 2)
-   *   Row 17: Move 4 (Slot 3)
-   * Tile value 0xED is the arrow cursor (▶).
+   *   Row 13: Move 1 (Slot 0)
+   *   Row 14: Move 2 (Slot 1)
+   *   Row 15: Move 3 (Slot 2)
+   *   Row 16: Move 4 (Slot 3)
+   * Tile value 0xED is the arrow cursor (▶) located around columns 7..11.
    */
   private getMoveSubMenuCursor(mmu: any): number {
     const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
 
-    // 1. Direct Tilemap inspection on rows 14..17
+    // 1. Direct Tilemap inspection on rows 13..16
     for (let slot = 0; slot < 4; slot++) {
-      const row = 14 + slot;
+      const row = 13 + slot;
       const rBase = base + row * 20;
-      for (let col = 1; col <= 8; col++) {
+      for (let col = 7; col <= 11; col++) {
         if (mmu.read(rBase + col) === 0xED) {
           return slot;
         }
@@ -1139,13 +1163,11 @@ export class SimpleTrainerBot {
       await this.wait(220);
 
       // Étape 5 : Sous-menu (ENVOYER / STATS)
-      // Dans le sous-menu de Pokémon, l'option 0 est ENVOYER. On s'assure d'être sur l'option 0 puis on valide avec [A]
+      // Dans le sous-menu de Pokémon, l'option 0 est ENVOYER. On valide directement avec [A]
       const postMaxMenu = mmu.read(maxItemAddr);
       const postTopY = mmu.read(topMenuYAddr);
       if (postTopY !== 1 && (postMaxMenu === 1 || postMaxMenu === 2)) {
         this.addLog('move', `🚀 Confirmation de l'envoi [A]`);
-        await this.tapKey('up', 50);
-        await this.wait(50);
         await this.tapKey('a', 80);
         await this.wait(220);
       }
@@ -1331,10 +1353,8 @@ export class SimpleTrainerBot {
       return;
     }
 
-    // Si nous sommes dans le sous-menu de sélection des 4 attaques (TopMenuX = 4 ou 5)
-    const topXAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu);
-    const topX = mmu.read(topXAddr);
-    if (topX === 4 || topX === 5) {
+    // Si nous sommes dans le sous-menu de sélection des 4 attaques
+    if (this.isMoveSubMenuVisible(mmu)) {
       await this.selectMoveInSubMenu(mmu, targetSlot);
       return;
     }
