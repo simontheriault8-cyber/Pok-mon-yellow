@@ -557,6 +557,7 @@ export class SimpleTrainerBot {
       case 0xE6: return '...';
       case 0xEE: return '▼'; // More text prompt arrow
       case 0xED: return '▶'; // Menu cursor arrow
+      case 0xF3: return '/'; // Slash
       case 0xBA: return 'é';
       case 0xBB: return '\'d';
       case 0xBC: return '\'l';
@@ -818,19 +819,13 @@ export class SimpleTrainerBot {
     const joyIgnore = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu));
     if (joyIgnore > 0) return false;
 
-    // Dans le sous-menu d'attaque, la boîte de dialogue affiche "TYPE/" ou "TYPE" aux lignes 12 ou 13
+    // Strict visual confirmation: The move menu ALWAYS displays "TYPE" in the header (row 12, 13, or 14).
+    // This prevents a race condition where RAM updates before the screen finishes drawing.
     for (let r = 12; r <= 14; r++) {
       const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
-      if (line.includes('TYPE/') || line.includes('TYPE')) {
+      if (line.includes('TYPE')) {
         return true;
       }
-    }
-
-    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
-    const maxItem = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu));
-    // Si maxItem > 1 (3 pour 4 attaques) et topY est 4 ou 12
-    if (maxItem > 1 && (topY === 4 || topY === 12 || topY === 13)) {
-      return true;
     }
 
     return false;
@@ -862,72 +857,83 @@ export class SimpleTrainerBot {
   /**
    * Read the exact cursor position in the 2x2 Battle Menu.
    * Layout in Gen 1:
-   *   [Top-Left: FIGHT/ATTAQ]    [Top-Right: PKMN]
-   *   [Bottom-Left: ITEM/OBJET]  [Bottom-Right: RUN/FUITE]
+   *   Row 14: [Top-Left: ▶FIGHT/ATTAQ]    [Top-Right: ▶PKMN]
+   *   Row 16: [Bottom-Left: ▶ITEM/OBJET]  [Bottom-Right: ▶RUN/FUITE]
    */
-  private getBattleMenu2x2Cursor(mmu: any): 'FIGHT' | 'PKMN' | 'ITEM' | 'RUN' | 'UNKNOWN' {
+  private getBattleMenu2x2Cursor(mmu: any): 'FIGHT' | 'PKMN' | 'ITEM' | 'RUN' {
     const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
 
     // 1. Direct Tilemap inspection for cursor arrow (▶ = 0xED)
-    // Rows 13 and 14 (Top row: FIGHT / PKMN)
-    for (const r of [13, 14]) {
-      const rBase = base + r * 20;
-      for (let c = 7; c <= 11; c++) {
-        if (mmu.read(rBase + c) === 0xED) return 'FIGHT';
-      }
-      for (let c = 13; c <= 17; c++) {
-        if (mmu.read(rBase + c) === 0xED) return 'PKMN';
-      }
+    // Row 14 (Top row: FIGHT / PKMN)
+    const r14Base = base + 14 * 20;
+    for (let c = 7; c <= 11; c++) {
+      if (mmu.read(r14Base + c) === 0xED) return 'FIGHT';
+    }
+    for (let c = 13; c <= 17; c++) {
+      if (mmu.read(r14Base + c) === 0xED) return 'PKMN';
     }
 
-    // Rows 15 and 16 (Bottom row: ITEM / RUN)
-    for (const r of [15, 16]) {
-      const rBase = base + r * 20;
-      for (let c = 7; c <= 11; c++) {
-        if (mmu.read(rBase + c) === 0xED) return 'ITEM';
-      }
-      for (let c = 13; c <= 17; c++) {
-        if (mmu.read(rBase + c) === 0xED) return 'RUN';
-      }
+    // Row 16 (Bottom row: ITEM / RUN)
+    const r16Base = base + 16 * 20;
+    for (let c = 7; c <= 11; c++) {
+      if (mmu.read(r16Base + c) === 0xED) return 'ITEM';
+    }
+    for (let c = 13; c <= 17; c++) {
+      if (mmu.read(r16Base + c) === 0xED) return 'RUN';
     }
 
-    // 2. RAM coordinates fallback
-    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
-    const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
-
-    if (topY <= 13) {
-      return topX >= 13 ? 'PKMN' : 'FIGHT';
-    } else {
-      return topX >= 13 ? 'RUN' : 'ITEM';
+    // Row 13 & 15 tolerance
+    const r13Base = base + 13 * 20;
+    for (let c = 7; c <= 11; c++) {
+      if (mmu.read(r13Base + c) === 0xED) return 'FIGHT';
     }
+    for (let c = 13; c <= 17; c++) {
+      if (mmu.read(r13Base + c) === 0xED) return 'PKMN';
+    }
+
+    // Default: in Gen 1, battle menu starts at FIGHT (Top-Left)
+    return 'FIGHT';
   }
 
   /**
    * Read the exact cursor position in the Attack / Move selection sub-menu (0..3).
-   * In Gen 1 Battle screen:
-   *   Row 13: Move 1 (Slot 0)
-   *   Row 14: Move 2 (Slot 1)
-   *   Row 15: Move 3 (Slot 2)
-   *   Row 16: Move 4 (Slot 3)
-   * Tile value 0xED is the arrow cursor (▶) located around columns 7..11.
+   * Tile value 0xED is the arrow cursor (▶).
    */
   private getMoveSubMenuCursor(mmu: any): number {
     const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
 
-    // 1. Direct Tilemap inspection on rows 13..16
-    for (let slot = 0; slot < 4; slot++) {
-      const row = 13 + slot;
-      const rBase = base + row * 20;
-      for (let col = 7; col <= 11; col++) {
-        if (mmu.read(rBase + col) === 0xED) {
-          return slot;
+    // 1. Direct Tilemap inspection (scan rows 12 to 17 for the cursor 0xED)
+    let foundCursorRow = -1;
+    for (let r = 12; r <= 17; r++) {
+      const rBase = base + r * 20;
+      for (let c = 1; c <= 18; c++) {
+        if (mmu.read(rBase + c) === 0xED) {
+          foundCursorRow = r;
+          break;
         }
+      }
+      if (foundCursorRow !== -1) break;
+    }
+
+    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
+    if (foundCursorRow !== -1 && topY >= 12 && topY <= 14) {
+      const slot = foundCursorRow - topY;
+      if (slot >= 0 && slot <= 3) {
+        return slot;
       }
     }
 
     // 2. RAM coordinates fallback (wCurrentMenuItem at 0xCC26)
     const cursor = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu));
-    return (cursor >= 0 && cursor <= 3) ? cursor : 0;
+    const maxItem = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu));
+    
+    // In Gen 1, if you switch Pokemon, wCurrentMenuItem might be leftover (e.g. 5), 
+    // but maxItem is 3 for 4 moves. The game bounds it visually and logically.
+    let fallback = cursor;
+    if (fallback > maxItem) fallback = maxItem;
+    if (fallback < 0) fallback = 0;
+    
+    return fallback;
   }
 
   /**
@@ -937,7 +943,7 @@ export class SimpleTrainerBot {
    * If on ITEM or wrong position, adjusts direction and NEVER validates on ITEM.
    */
   private async ensureBattleMenu2x2Cursor(mmu: any, target: 'FIGHT' | 'PKMN'): Promise<boolean> {
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < 6; attempt++) {
       // If Item bag is open, cancel back with [B]
       if (this.isItemBagOpen(mmu)) {
         this.addLog('safety', '🛡️ Menu Objets détecté par inadvertance -> Fermeture immédiate [B]');
@@ -947,8 +953,7 @@ export class SimpleTrainerBot {
       }
 
       // If attack sub-menu is open, cancel back to 2x2 menu with [B]
-      const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
-      if (topX === 4 || topX === 5) {
+      if (this.isMoveSubMenuVisible(mmu)) {
         await this.tapKey('b', 60);
         await this.wait(100);
         continue;
@@ -957,7 +962,7 @@ export class SimpleTrainerBot {
       const curPos = this.getBattleMenu2x2Cursor(mmu);
 
       if (curPos === target) {
-        // Cursor confirmed on target!
+        // Cursor confirmed on target! No direction buttons needed.
         return true;
       }
 
@@ -973,10 +978,6 @@ export class SimpleTrainerBot {
         } else if (curPos === 'RUN') {
           await this.tapKey('up', 60);
           await this.wait(80);
-        } else {
-          // Position indéterminée : tentative vers la droite
-          await this.tapKey('right', 50);
-          await this.wait(70);
         }
       } else if (target === 'FIGHT') {
         if (curPos === 'PKMN') {
@@ -986,14 +987,10 @@ export class SimpleTrainerBot {
           await this.tapKey('up', 60);
           await this.wait(80);
         } else if (curPos === 'RUN') {
-          await this.tapKey('up', 60);
-          await this.wait(60);
           await this.tapKey('left', 60);
+          await this.wait(60);
+          await this.tapKey('up', 60);
           await this.wait(80);
-        } else {
-          // Position indéterminée : juste une impulsion vers la gauche (JAMAIS vers le HAUT pour éviter les bugs)
-          await this.tapKey('left', 50);
-          await this.wait(70);
         }
       }
     }
@@ -1359,8 +1356,15 @@ export class SimpleTrainerBot {
       return;
     }
 
-    // Si des dialogues défilent ou des animations se jouent :
-    await this.tapKey('a', 70);
+    // Si des dialogues défilent ou attendent une confirmation :
+    const diag = this.getScreenDialogueText(mmu);
+    if (diag.hasPromptArrow) {
+      await this.tapKey('a', 70);
+      return;
+    }
+    
+    // Attendre simplement que les animations ou transitions de menu se terminent
+    await this.wait(100);
   }
 
   /**
@@ -1369,25 +1373,18 @@ export class SimpleTrainerBot {
    * before pressing [A]. Never presses UP when already at Slot 0 to prevent menu wrap-around!
    */
   private async selectMoveInSubMenu(mmu: any, targetSlot: number): Promise<void> {
-    const currentSlot = this.getMoveSubMenuCursor(mmu);
-
     if (targetSlot === 0) {
-      if (currentSlot === 0) {
-        // Déjà positionné sur la 1ère attaque (Slot 1) : Validation immédiate avec [A], aucun appui directionnel !
+      const cur = this.getMoveSubMenuCursor(mmu);
+      if (cur === 0) {
+        // Already on Slot 1 (primary attack): immediate validation with [A]
         await this.tapKey('a', 80);
         await this.wait(150);
         return;
-      } else if (currentSlot === 1) {
+      }
+
+      // If on slot > 0, move strictly up by `cur` steps
+      for (let i = 0; i < cur; i++) {
         await this.tapKey('up', 50);
-        await this.wait(80);
-      } else if (currentSlot === 2) {
-        await this.tapKey('up', 50);
-        await this.wait(60);
-        await this.tapKey('up', 50);
-        await this.wait(80);
-      } else if (currentSlot === 3) {
-        // Du Slot 4 au Slot 1 : un seul coup vers le bas fait le tour vers le Slot 1
-        await this.tapKey('down', 50);
         await this.wait(80);
       }
       await this.tapKey('a', 80);
@@ -1395,22 +1392,21 @@ export class SimpleTrainerBot {
       return;
     }
 
-    // Si targetSlot > 0 (ex: Slot 1 n'a plus de PP)
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let attempt = 0; attempt < 6; attempt++) {
       const cur = this.getMoveSubMenuCursor(mmu);
       if (cur === targetSlot) {
         break;
       }
       if (cur < targetSlot) {
         await this.tapKey('down', 50);
-        await this.wait(70);
+        await this.wait(80);
       } else if (cur > targetSlot) {
         await this.tapKey('up', 50);
-        await this.wait(70);
+        await this.wait(80);
       }
     }
 
-    // Directly validate move selection with [A]
+    // Directly validate confirmed move selection with [A]
     await this.tapKey('a', 80);
     await this.wait(150);
   }
