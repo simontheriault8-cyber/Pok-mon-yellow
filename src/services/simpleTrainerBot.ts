@@ -1301,28 +1301,47 @@ export class SimpleTrainerBot {
       return;
     }
 
-    // Si nous sommes dans le sous-menu de sélection des 4 attaques
+    // Si nous sommes dans le sous-menu de sélection des 4 attaques (TopMenuX = 4 ou 5)
     const topXAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu);
     const topX = mmu.read(topXAddr);
     if (topX === 4 || topX === 5) {
-      if (targetSlot === 0 || !foundValidMove) {
-        await this.tapKey('up', 40);
-        await this.wait(30);
-        await this.tapKey('a', 80);
-        return;
-      }
-
-      // Si le slot cible est 2, 3 ou 4 (car le Slot 1 n'a plus de PP) :
-      for (let i = 0; i < targetSlot; i++) {
-        await this.tapKey('down', 60);
-        await this.wait(40);
-      }
-      await this.tapKey('a', 80);
+      await this.selectMoveInSubMenu(mmu, targetSlot);
       return;
     }
 
     // Si des dialogues défilent ou des animations se jouent :
     await this.tapKey('a', 70);
+  }
+
+  /**
+   * Verified Move Selection in Battle Sub-menu (4 moves vertical list):
+   * Guarantees the cursor is strictly on targetSlot (0 = Slot 1, 1 = Slot 2, etc.)
+   * before pressing [A]. Never presses UP when already at Slot 0 to prevent menu wrap-around!
+   */
+  private async selectMoveInSubMenu(mmu: any, targetSlot: number): Promise<void> {
+    const cursorAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu);
+
+    // Re-verify and adjust position if not strictly on targetSlot
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let currentSlot = mmu.read(cursorAddr);
+      if (currentSlot > 3) currentSlot = 0;
+
+      if (currentSlot === targetSlot) {
+        break;
+      }
+
+      if (currentSlot < targetSlot) {
+        await this.tapKey('down', 50);
+        await this.wait(60);
+      } else if (currentSlot > targetSlot) {
+        await this.tapKey('up', 50);
+        await this.wait(60);
+      }
+    }
+
+    // Directly validate move selection with [A]
+    await this.tapKey('a', 80);
+    await this.wait(150);
   }
 
   /**
