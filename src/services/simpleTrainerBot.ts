@@ -819,11 +819,21 @@ export class SimpleTrainerBot {
     const joyIgnore = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu));
     if (joyIgnore > 0) return false;
 
-    // Strict visual confirmation: The move menu ALWAYS displays "TYPE" in the header (row 12, 13, or 14).
-    // This prevents a race condition where RAM updates before the screen finishes drawing.
+    // Check for "TYPE" in dialogue/move box header lines (rows 12..14)
     for (let r = 12; r <= 14; r++) {
       const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
       if (line.includes('TYPE')) {
+        return true;
+      }
+    }
+
+    // Secondary RAM layout check: maxItem <= 3 and topY in battle move menu range
+    const maxItem = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu));
+    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
+    if (maxItem >= 0 && maxItem <= 3 && (topY === 4 || topY === 12 || topY === 14)) {
+      // Confirm it's not the 2x2 menu (which has topX=9 or 15 and maxItem=1)
+      const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
+      if (topX === 4 || topX === 0 || topX === 1) {
         return true;
       }
     }
@@ -897,43 +907,33 @@ export class SimpleTrainerBot {
 
   /**
    * Read the exact cursor position in the Attack / Move selection sub-menu (0..3).
-   * Tile value 0xED is the arrow cursor (▶).
+   * 0 = Move 1 (Top), 1 = Move 2, 2 = Move 3, 3 = Move 4 (Bottom).
    */
   private getMoveSubMenuCursor(mmu: any): number {
-    const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
-
-    // 1. Direct Tilemap inspection (scan rows 12 to 17 for the cursor 0xED)
-    let foundCursorRow = -1;
-    for (let r = 12; r <= 17; r++) {
-      const rBase = base + r * 20;
-      for (let c = 1; c <= 18; c++) {
-        if (mmu.read(rBase + c) === 0xED) {
-          foundCursorRow = r;
-          break;
-        }
-      }
-      if (foundCursorRow !== -1) break;
-    }
-
-    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
-    if (foundCursorRow !== -1 && topY >= 12 && topY <= 14) {
-      const slot = foundCursorRow - topY;
-      if (slot >= 0 && slot <= 3) {
-        return slot;
-      }
-    }
-
-    // 2. RAM coordinates fallback (wCurrentMenuItem at 0xCC26)
+    // 1. Direct hardware RAM variable: wCurrentMenuItem (0xCC26)
     const cursor = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu));
     const maxItem = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu));
     
-    // In Gen 1, if you switch Pokemon, wCurrentMenuItem might be leftover (e.g. 5), 
-    // but maxItem is 3 for 4 moves. The game bounds it visually and logically.
-    let fallback = cursor;
-    if (fallback > maxItem) fallback = maxItem;
-    if (fallback < 0) fallback = 0;
-    
-    return fallback;
+    // In Gen 1, maxItem is (number of moves - 1), typically 3 for 4 moves.
+    const maxBound = (maxItem >= 0 && maxItem <= 3) ? maxItem : 3;
+    if (cursor >= 0 && cursor <= maxBound) {
+      return cursor;
+    }
+
+    // 2. Direct Tilemap inspection as secondary confirmation (scan rows 13..17 for ▶ 0xED)
+    const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
+    for (let r = 13; r <= 17; r++) {
+      const rBase = base + r * 20;
+      for (let c = 1; c <= 12; c++) {
+        if (mmu.read(rBase + c) === 0xED) {
+          // If cursor is at row 14 or 15 (first move)
+          const slot = Math.max(0, Math.min(3, r - 14));
+          return slot;
+        }
+      }
+    }
+
+    return 0;
   }
 
   /**
@@ -1370,45 +1370,30 @@ export class SimpleTrainerBot {
   /**
    * Verified Move Selection in Battle Sub-menu (4 moves vertical list):
    * Guarantees the cursor is strictly on targetSlot (0 = Slot 1, 1 = Slot 2, etc.)
-   * before pressing [A]. Never presses UP when already at Slot 0 to prevent menu wrap-around!
+   * and executes validation with [A].
    */
   private async selectMoveInSubMenu(mmu: any, targetSlot: number): Promise<void> {
-    if (targetSlot === 0) {
-      const cur = this.getMoveSubMenuCursor(mmu);
-      if (cur === 0) {
-        // Already on Slot 1 (primary attack): immediate validation with [A]
-        await this.tapKey('a', 80);
-        await this.wait(150);
-        return;
-      }
+    const cur = this.getMoveSubMenuCursor(mmu);
 
-      // If on slot > 0, move strictly up by `cur` steps
-      for (let i = 0; i < cur; i++) {
-        await this.tapKey('up', 50);
-        await this.wait(80);
-      }
-      await this.tapKey('a', 80);
-      await this.wait(150);
-      return;
-    }
-
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const cur = this.getMoveSubMenuCursor(mmu);
-      if (cur === targetSlot) {
-        break;
-      }
-      if (cur < targetSlot) {
-        await this.tapKey('down', 50);
-        await this.wait(80);
-      } else if (cur > targetSlot) {
-        await this.tapKey('up', 50);
-        await this.wait(80);
+    if (cur !== targetSlot) {
+      if (cur > targetSlot) {
+        const steps = cur - targetSlot;
+        for (let i = 0; i < steps; i++) {
+          await this.tapKey('up', 60);
+          await this.wait(100);
+        }
+      } else {
+        const steps = targetSlot - cur;
+        for (let i = 0; i < steps; i++) {
+          await this.tapKey('down', 60);
+          await this.wait(100);
+        }
       }
     }
 
     // Directly validate confirmed move selection with [A]
-    await this.tapKey('a', 80);
-    await this.wait(150);
+    await this.tapKey('a', 90);
+    await this.wait(250);
   }
 
   /**
