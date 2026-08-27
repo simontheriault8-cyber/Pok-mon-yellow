@@ -27,8 +27,8 @@ export const BOT_MODES: BotModeInfo[] = [
   {
     id: 'train_slot_1',
     name: 'Entraînement premier Pokémon',
-    shortDesc: 'Partage d’EXP : switch vers le dernier au T1',
-    description: 'Envoie le Pokémon du Slot 1 pour l’EXP, puis switch immédiatement vers le dernier Pokémon de l’équipe pour remporter le combat.'
+    shortDesc: 'Rotation niv. max & fuite/soin auto',
+    description: 'Envoie le Slot 1 puis switch au T1. Si 1 seul Pokémon vivant reste, fuite du combat puis soin auto en Centre Pokémon et reprise. Échange automatique au niveau max.'
   }
 ];
 
@@ -39,12 +39,19 @@ export interface BotLogEntry {
   message: string;
 }
 
+export interface PartyMonStatus {
+  slot: number;
+  curHp: number;
+  maxHp: number;
+  level: number;
+}
+
 export interface PartyStatus {
   isValid: boolean;
   totalMons: number;
   aliveMons: number;
   faintedMons: number;
-  monsHp: { slot: number; curHp: number; maxHp: number }[];
+  monsHp: PartyMonStatus[];
 }
 
 export class SimpleTrainerBot {
@@ -69,6 +76,7 @@ export class SimpleTrainerBot {
   private activeMonIndex: number = 0;
   private hasSwitchedToLastMonInCurrentBattle: boolean = false;
   private startTime: number | null = null;
+  private targetLevel: number = 50; // Target level for slot 1 training rotation
 
   // Cached Party Status (guarantees safe fallback during RAM transitions)
   private cachedPartyStatus: PartyStatus = {
@@ -76,7 +84,7 @@ export class SimpleTrainerBot {
     totalMons: 1,
     aliveMons: 1,
     faintedMons: 0,
-    monsHp: [{ slot: 1, curHp: 20, maxHp: 20 }]
+    monsHp: [{ slot: 1, curHp: 20, maxHp: 20, level: 1 }]
   };
 
   // Live Logs History (Max 200 entries)
@@ -86,6 +94,7 @@ export class SimpleTrainerBot {
   public onStateChange?: (isRunning: boolean, state: TrainerBotState) => void;
   public onModeChange?: (mode: TrainerBotMode) => void;
   public onLogsUpdate?: (logs: BotLogEntry[]) => void;
+  public onAutoHealRequest?: () => void;
 
   constructor(emulator?: GameBoy | null) {
     if (emulator) {
@@ -103,6 +112,18 @@ export class SimpleTrainerBot {
 
   public getState(): TrainerBotState {
     return this.state;
+  }
+
+  public getTargetLevel(): number {
+    return this.targetLevel;
+  }
+
+  public setTargetLevel(level: number): void {
+    const validLevel = Math.min(100, Math.max(1, Math.floor(level)));
+    if (this.targetLevel !== validLevel) {
+      this.targetLevel = validLevel;
+      this.addLog('info', `🎯 Niveau max cible configuré : Niveau ${this.targetLevel}`);
+    }
   }
 
   public getMode(): TrainerBotMode {
@@ -229,19 +250,30 @@ export class SimpleTrainerBot {
    */
   private tryParseParty(mmu: any, baseHpAddr: number, baseMaxHpAddr: number, countAddr: number): PartyStatus | null {
     const rawCount = mmu.read(countAddr);
-    const monsHp: { slot: number; curHp: number; maxHp: number }[] = [];
+    const monsHp: PartyMonStatus[] = [];
     let aliveMons = 0;
     let validSlots = 0;
+    const baseMonAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_BASE_EN, mmu);
 
     for (let i = 0; i < 6; i++) {
       const offset = i * POKEMON_YELLOW_RAM.PARTY_STRUCT_SIZE;
       const curHp = (mmu.read(baseHpAddr + offset) << 8) | mmu.read(baseHpAddr + offset + 1);
       const maxHp = (mmu.read(baseMaxHpAddr + offset) << 8) | mmu.read(baseMaxHpAddr + offset + 1);
 
+      let level = mmu.read(baseMonAddr + offset + 33);
+      if (level < 1 || level > 100) {
+        const boxLevel = mmu.read(baseMonAddr + offset + 3);
+        if (boxLevel >= 1 && boxLevel <= 100) {
+          level = boxLevel;
+        } else {
+          level = 1;
+        }
+      }
+
       // Validate: Gen 1 Pokemon Max HP is between 5 and 999, and curHp cannot exceed maxHp by large margin
       if (maxHp >= 5 && maxHp <= 999 && curHp <= maxHp + 100) {
         validSlots++;
-        monsHp.push({ slot: i + 1, curHp, maxHp });
+        monsHp.push({ slot: i + 1, curHp, maxHp, level });
         if (curHp > 0) {
           aliveMons++;
         }
@@ -342,20 +374,16 @@ export class SimpleTrainerBot {
       }
 
       if (partyStatus.isValid && now > this.switchCooldownUntil) {
-        // Arrêt si toute l'équipe est K.O. (ou 1 seul restant en mode entraînement)
+        // Arrêt si toute l'équipe est K.O.
         let isKillSwitch = false;
         if (partyStatus.totalMons > 0 && partyStatus.aliveMons === 0) {
-          isKillSwitch = true;
-        } else if (this.mode === 'train_slot_1' && partyStatus.totalMons > 1 && partyStatus.aliveMons <= 1) {
           isKillSwitch = true;
         }
 
         if (isKillSwitch) {
           this.consecutiveSafetyCount++;
           if (this.consecutiveSafetyCount >= 4) {
-            this.stop(partyStatus.aliveMons === 0 
-              ? `Sécurité équipe : Tous les Pokémon sont K.O. (0/${partyStatus.totalMons} vivant).`
-              : `Sécurité équipe : 1 seul Pokémon en vie (Slot 1). Arrêt pour le préserver.`);
+            this.stop(`Sécurité équipe : Tous les Pokémon sont K.O. (0/${partyStatus.totalMons} vivant).`);
             return;
           }
         } else {
@@ -399,6 +427,7 @@ export class SimpleTrainerBot {
         if (!this.wasInBattle) {
           this.wasInBattle = true;
           this.hasSwitchedToLastMonInCurrentBattle = false;
+          this.activeMonIndex = 0;
           this.lastLoggedSlot = -1;
           const hpStr = maxBattleHp > 0 ? `${curBattleHp}/${maxBattleHp} PV` : 'Initialisation...';
           const modeInfo = BOT_MODES.find((m) => m.id === this.mode);
@@ -426,14 +455,14 @@ export class SimpleTrainerBot {
             }
           }
 
-          if (lastAliveIndex > 0 && this.activeMonIndex === 0) {
+          if (lastAliveIndex > 0) {
             if (!this.isSwitchingPokemon && now > this.switchCooldownUntil) {
               await this.handleManualSwitchToMon(mmu, partyStatus, lastAliveIndex);
             }
             this.scheduleNextTick(150);
             return;
           } else {
-            // Aucun autre Pokémon vivant disponible ou déjà swappé
+            // Aucun autre Pokémon vivant disponible dans les slots 2..6
             this.hasSwitchedToLastMonInCurrentBattle = true;
           }
         }
@@ -452,7 +481,25 @@ export class SimpleTrainerBot {
           this.addLog('info', `🏆 [RAM: 0xD057=0x00] Victoire/Fin du combat -> Attente de la carte (${partyStatus.aliveMons}/${partyStatus.totalMons} Pokémon vivants)`);
           // Nettoyer les dialogues post-combat et attendre la fin du fondu
           await this.handlePostBattle(mmu);
+
+          // Évaluation du niveau max du Slot 1 et rotation d'équipe au retour dans l'overworld
+          if (this.mode === 'train_slot_1' && this.targetLevel > 0) {
+            await this.checkAndHandleTargetLevelSwitch(mmu);
+            if (!this.isRunning) return;
+          }
         }
+
+        // Mode Entraînement 1er Pokémon : Si 1 seul Pokémon restant en vie, pause et déclenchement du Bot Soin auto !
+        if (this.mode === 'train_slot_1' && partyStatus.totalMons > 1 && partyStatus.aliveMons <= 1) {
+          this.addLog('info', `🩺 [Sécurité Entraînement] 1 seul Pokémon en vie (Slot 1) -> Activation automatique du Bot Soin (Centre Pokémon)...`);
+          this.isRunning = false;
+          this.notifyState();
+          if (this.onAutoHealRequest) {
+            this.onAutoHealRequest();
+          }
+          return;
+        }
+
         this.state = 'walking';
         this.notifyState();
         await this.handleOverworld(mmu);
@@ -599,6 +646,35 @@ export class SimpleTrainerBot {
   }
 
   /**
+   * Helper to check if a text/dialogue box is actively drawn on the lower screen (rows 12..17).
+   */
+  private isTextBoxActiveOnScreen(mmu: any): boolean {
+    if (!mmu) return false;
+    const tilemapBase = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
+    let boxBorderCount = 0;
+    let textCharCount = 0;
+
+    for (let row = 12; row <= 17; row++) {
+      const rowAddr = tilemapBase + row * 20;
+      for (let col = 0; col < 20; col++) {
+        const tile = mmu.read(rowAddr + col);
+        if (tile === 0x70 || tile === 0x71 || tile === 0x72 || tile === 0x73 || tile === 0x78) {
+          boxBorderCount++;
+        }
+        if (
+          (tile >= 0x80 && tile <= 0x99) ||
+          (tile >= 0xA0 && tile <= 0xB9) ||
+          (tile >= 0xF6 && tile <= 0xFF) ||
+          (tile >= 0xE7 && tile <= 0xEE)
+        ) {
+          textCharCount++;
+        }
+      }
+    }
+    return boxBorderCount >= 4 || textCharCount >= 4;
+  }
+
+  /**
    * Handle Pokémon Fainted Switch in Battle:
    * 1. Détection réactive de la fin du message de K.O. et de la question "Changer de Pokémon ? (Oui/Non)".
    * 2. Transition vers le menu de l'équipe (wTopMenuItemY == 1).
@@ -633,8 +709,12 @@ export class SimpleTrainerBot {
       }
 
       if (nextAliveIndex === -1) {
-        this.stop('Tous les Pokémon de l\'équipe sont K.O.');
-        return;
+        // En mode entraînement, si tous les slots 2..6 sont KO, nextAliveIndex est -1.
+        // Si Slot 1 est encore en vie (partyStatus.aliveMons === 1), on va fuir via le prompt "Changer de Pokémon ? NON".
+        if (partyStatus.aliveMons === 0) {
+          this.stop('Tous les Pokémon de l\'équipe sont K.O.');
+          return;
+        }
       }
 
       const cursorAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu);
@@ -643,10 +723,20 @@ export class SimpleTrainerBot {
       const maxItemAddr = resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu);
       const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
 
-      this.addLog('safety', `💀 Pokémon actif K.O. ! Commande de switch vers Slot ${nextAliveIndex + 1} (${partyStatus.monsHp[nextAliveIndex]?.curHp}/${partyStatus.monsHp[nextAliveIndex]?.maxHp} PV).`);
+      // Stratégie de fuite automatique par le prompt :
+      // Si seul 1 Pokémon reste en vie (avant-dernier KO) ou plus aucun Pokémon d'attaque disponible dans les slots 2..6
+      const shouldFleeViaPrompt =
+        (this.mode === 'train_slot_1' && (nextAliveIndex === -1 || partyStatus.aliveMons <= 1)) ||
+        (partyStatus.totalMons > 1 && partyStatus.aliveMons <= 1);
 
-      // Étape 1 : Attendre et naviguer jusqu'à l'écran de sélection de l'équipe (wTopMenuItemY == 1)
-      this.addLog('move', '🔄 Purge du message de K.O... Attente du menu Équipe (RAM)');
+      if (shouldFleeViaPrompt) {
+        this.addLog('safety', `🏃 [Sécurité Fuite] Avant-dernier Pokémon K.O. (${partyStatus.aliveMons}/${partyStatus.totalMons} vivant) -> Préparation du refus "Changer de Pokémon ? NON"...`);
+      } else {
+        this.addLog('safety', `💀 Pokémon actif K.O. ! Commande de switch vers Slot ${nextAliveIndex + 1} (${partyStatus.monsHp[nextAliveIndex]?.curHp}/${partyStatus.monsHp[nextAliveIndex]?.maxHp} PV).`);
+      }
+
+      // Étape 1 : Attendre et naviguer jusqu'à l'écran de sélection de l'équipe (wTopMenuItemY == 1) ou refuser avec "NON"
+      this.addLog('move', '🔄 Purge du message de K.O... Attente du prompt / menu Équipe (RAM)');
       let partyMenuReady = false;
       let attempts = 0;
 
@@ -662,14 +752,35 @@ export class SimpleTrainerBot {
 
         // Si le prompt "Changer de Pokémon ?" (Oui/Non) est actif (Y=10, X=14)
         if (topY === 10 && topX === 14) {
-          const cur = mmu.read(cursorAddr);
-          if (cur !== 0) {
-            // Positionner sur "OUI" (index 0)
-            await this.tapKey('up', 60);
-            await this.wait(100);
+          if (shouldFleeViaPrompt) {
+            this.addLog('safety', '🏃 [Fuite Automatique] Prompt "Changer de Pokémon ?" détecté -> Sélection de "NON" (bas + A) pour fuir le combat immédiatement !');
+            const cur = mmu.read(cursorAddr);
+            if (cur !== 1) {
+              // Positionner sur "NON" (index 1)
+              await this.tapKey('down', 60);
+              await this.wait(100);
+            }
+            await this.tapKey('a', 70);
+            await this.wait(200);
+
+            // Attendre la fin du combat et purger l'écran post-fuite
+            let fleeAttempts = 0;
+            while (mmu.read(joyIgnoreAddr) > 0 && fleeAttempts < 25) {
+              await this.wait(80);
+              fleeAttempts++;
+            }
+            await this.handlePostBattle(mmu);
+            return;
+          } else {
+            const cur = mmu.read(cursorAddr);
+            if (cur !== 0) {
+              // Positionner sur "OUI" (index 0)
+              await this.tapKey('up', 60);
+              await this.wait(100);
+            }
+            await this.tapKey('a', 60);
+            await this.wait(200);
           }
-          await this.tapKey('a', 60);
-          await this.wait(200);
         } else {
           // Faire défiler les dialogues ("NIDORAN est K.O.!", etc.)
           await this.tapKey('a', 60);
@@ -783,59 +894,86 @@ export class SimpleTrainerBot {
    * Helper to check if the standard 2x2 battle menu (FIGHT / PKMN / ITEM / RUN) is actively drawn on the screen.
    */
   private isBattleMenu2x2Visible(mmu: any): boolean {
-    const joyIgnore = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu));
-    // Si la Game Boy ignore les touches (animation/fondu), le menu n'est pas encore interactif
-    if (joyIgnore > 0) return false;
-
-    // Si le sous-menu d'attaques (avec TYPE/) est affiché, ce n'est PAS le menu 2x2
-    if (this.isMoveSubMenuVisible(mmu)) {
+    if (this.isPartyScreenVisible(mmu) || this.isItemBagOpen(mmu)) {
       return false;
     }
 
+    // Inspection Tilemap de rows 12..17
+    let hasFight = false;
+    let hasOther2x2Option = false;
+    for (let r = 12; r <= 17; r++) {
+      const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
+      if (line.includes('FIGHT') || line.includes('ATTAQ') || line.includes('COMBAT')) hasFight = true;
+      if (
+        line.includes('PKMN') ||
+        line.includes('POKÉMON') ||
+        line.includes('POKEMON') ||
+        line.includes('ITEM') ||
+        line.includes('OBJET') ||
+        line.includes('RUN') ||
+        line.includes('FUITE')
+      ) {
+        hasOther2x2Option = true;
+      }
+    }
+
+    // Dans le menu 2x2, FIGHT et au moins une autre option (PKMN/ITEM/RUN) sont affichés ensemble
+    if (hasFight && hasOther2x2Option) {
+      return true;
+    }
+
+    // Vérification RAM complémentaire : wMaxMenuItem == 1 et wTopMenuItemY in [12, 14]
     const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
     const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
     const maxItem = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu));
 
-    // Dans le menu 2x2, maxItem vaut 1 (2 lignes verticales)
     if (maxItem === 1 && (topY === 12 || topY === 14) && (topX === 9 || topX === 1 || topX === 15 || topX === 8)) {
       return true;
     }
 
-    // Inspection Tilemap de secours pour les mots-clés du menu 2x2
-    let hasFight = false;
-    let hasPkmn = false;
-    for (let r = 12; r <= 17; r++) {
-      const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
-      if (line.includes('FIGHT') || line.includes('ATTAQ')) hasFight = true;
-      if (line.includes('PKMN') || line.includes('POKÉMON') || line.includes('POKEMON')) hasPkmn = true;
-    }
-    return hasFight && hasPkmn;
+    return false;
   }
 
   /**
    * Helper to check if the 4-moves selection sub-menu is currently open on screen (showing TYPE/ and moves).
    */
   private isMoveSubMenuVisible(mmu: any): boolean {
-    const joyIgnore = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu));
-    if (joyIgnore > 0) return false;
+    if (this.isPartyScreenVisible(mmu) || this.isItemBagOpen(mmu)) {
+      return false;
+    }
 
-    // Check for "TYPE" in dialogue/move box header lines (rows 12..14)
-    for (let r = 12; r <= 14; r++) {
+    // Dans le sous-menu d'attaques, TYPE/ ou PP/ est affiché à gauche, et le menu 2x2 n'est plus là
+    let hasTypeOrPP = false;
+    let has2x2Options = false;
+
+    for (let r = 12; r <= 17; r++) {
       const line = this.readScreenLine(mmu, 0xC3A0 + r * 20, 20).toUpperCase();
-      if (line.includes('TYPE')) {
-        return true;
+      if (line.includes('TYPE') || line.includes('PP/')) {
+        hasTypeOrPP = true;
+      }
+      if (
+        line.includes('PKMN') ||
+        line.includes('POKÉMON') ||
+        line.includes('POKEMON') ||
+        line.includes('ITEM') ||
+        line.includes('OBJET') ||
+        line.includes('RUN') ||
+        line.includes('FUITE')
+      ) {
+        has2x2Options = true;
       }
     }
 
-    // Secondary RAM layout check: maxItem <= 3 and topY in battle move menu range
+    if (hasTypeOrPP && !has2x2Options) {
+      return true;
+    }
+
+    // Check RAM : maxItem <= 3 (menu vertical 4 items) et topX correspondant au sous-menu d'attaque (généralement 4 ou 0)
     const maxItem = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu));
-    const topY = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu));
-    if (maxItem >= 0 && maxItem <= 3 && (topY === 4 || topY === 12 || topY === 14)) {
-      // Confirm it's not the 2x2 menu (which has topX=9 or 15 and maxItem=1)
-      const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
-      if (topX === 4 || topX === 0 || topX === 1) {
-        return true;
-      }
+    const topX = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_X_EN, mmu));
+
+    if (maxItem >= 0 && maxItem <= 3 && (topX === 4 || topX === 0 || topX === 1 || topX === 5) && !has2x2Options) {
+      return true;
     }
 
     return false;
@@ -907,32 +1045,31 @@ export class SimpleTrainerBot {
 
   /**
    * Read the exact cursor position in the Attack / Move selection sub-menu (0..3).
-   * 0 = Move 1 (Top), 1 = Move 2, 2 = Move 3, 3 = Move 4 (Bottom).
+   * 0 = Move 1 (Top / row 14), 1 = Move 2 (row 15), 2 = Move 3 (row 16), 3 = Move 4 (Bottom / row 17).
+   * Uses direct tilemap rendering inspection (▶ = 0xED) as the ultimate ground truth.
    */
   private getMoveSubMenuCursor(mmu: any): number {
-    // 1. Direct hardware RAM variable: wCurrentMenuItem (0xCC26)
-    const cursor = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu));
-    const maxItem = mmu.read(resolveAddr(POKEMON_YELLOW_RAM.MAX_MENU_ITEM_EN, mmu));
-    
-    // In Gen 1, maxItem is (number of moves - 1), typically 3 for 4 moves.
-    const maxBound = (maxItem >= 0 && maxItem <= 3) ? maxItem : 3;
-    if (cursor >= 0 && cursor <= maxBound) {
-      return cursor;
-    }
-
-    // 2. Direct Tilemap inspection as secondary confirmation (scan rows 13..17 for ▶ 0xED)
     const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
-    for (let r = 13; r <= 17; r++) {
+
+    // 1. Direct Tilemap inspection: scan rows 14 to 17 for the cursor arrow (▶ = 0xED)
+    for (let r = 14; r <= 17; r++) {
       const rBase = base + r * 20;
-      for (let c = 1; c <= 12; c++) {
+      for (let c = 3; c <= 8; c++) {
         if (mmu.read(rBase + c) === 0xED) {
-          // If cursor is at row 14 or 15 (first move)
-          const slot = Math.max(0, Math.min(3, r - 14));
-          return slot;
+          return r - 14; // Exact slot index (0, 1, 2, or 3)
         }
       }
     }
 
+    // 2. Tolerance check for row 13
+    const r13Base = base + 13 * 20;
+    for (let c = 3; c <= 8; c++) {
+      if (mmu.read(r13Base + c) === 0xED) {
+        return 0;
+      }
+    }
+
+    // 3. Fallback: by default when move menu opens freshly, cursor is on Move 1 (Slot 0)
     return 0;
   }
 
@@ -942,20 +1079,13 @@ export class SimpleTrainerBot {
    * that the cursor is STRICTLY on target before returning true.
    * If on ITEM or wrong position, adjusts direction and NEVER validates on ITEM.
    */
-  private async ensureBattleMenu2x2Cursor(mmu: any, target: 'FIGHT' | 'PKMN'): Promise<boolean> {
+  private async ensureBattleMenu2x2Cursor(mmu: any, target: 'FIGHT' | 'PKMN' | 'RUN'): Promise<boolean> {
     for (let attempt = 0; attempt < 6; attempt++) {
       // If Item bag is open, cancel back with [B]
       if (this.isItemBagOpen(mmu)) {
         this.addLog('safety', '🛡️ Menu Objets détecté par inadvertance -> Fermeture immédiate [B]');
         await this.tapKey('b', 70);
         await this.wait(140);
-        continue;
-      }
-
-      // If attack sub-menu is open, cancel back to 2x2 menu with [B]
-      if (this.isMoveSubMenuVisible(mmu)) {
-        await this.tapKey('b', 60);
-        await this.wait(100);
         continue;
       }
 
@@ -990,6 +1120,19 @@ export class SimpleTrainerBot {
           await this.tapKey('left', 60);
           await this.wait(60);
           await this.tapKey('up', 60);
+          await this.wait(80);
+        }
+      } else if (target === 'RUN') {
+        if (curPos === 'FIGHT') {
+          await this.tapKey('down', 60);
+          await this.wait(60);
+          await this.tapKey('right', 60);
+          await this.wait(80);
+        } else if (curPos === 'PKMN') {
+          await this.tapKey('down', 60);
+          await this.wait(80);
+        } else if (curPos === 'ITEM') {
+          await this.tapKey('right', 60);
           await this.wait(80);
         }
       }
@@ -1201,41 +1344,254 @@ export class SimpleTrainerBot {
 
   /**
    * Post-Battle Transition & Victory Dialogue Flusher:
-   * Attend la fin du fondu (wJoyIgnore == 0) et purge les derniers textes avec [B] / [START] (Pokédex, surnom, dialogues).
+   * Attend la fin du fondu (wJoyIgnore == 0) et purge les derniers textes avec [A] / [B] / [START] (fuite, Pokédex, surnom, dialogues).
    */
   private async handlePostBattle(mmu: any): Promise<void> {
     const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
     
     let attempts = 0;
     // Attendre que la GameBoy rende la main au joueur (fin des animations/fades)
-    while (mmu.read(joyIgnoreAddr) > 0 && attempts < 40) {
+    while (mmu.read(joyIgnoreAddr) > 0 && attempts < 30) {
       const moveLearn = this.detectMoveLearnPrompt(mmu);
       if (moveLearn.isLearning) {
         this.stop(`Apprentissage d'attaque : ${moveLearn.reason}. Choisissez quelle attaque conserver ou oublier.`);
         return;
       }
-      // Tap B while waiting to clear any victory texts
-      await this.tapKey('b', 60);
-      await this.wait(80);
+      await this.wait(50);
       attempts++;
     }
 
-    // Purge de sécurité finale (fermeture des textes de victoire des dresseurs, pokédex, surnom)
-    for (let i = 0; i < 6; i++) {
+    // Purge de sécurité finale (fermeture des textes de fuite ("Got away safely!"), victoires, pokédex, surnom)
+    for (let i = 0; i < 25; i++) {
       const moveLearn = this.detectMoveLearnPrompt(mmu);
       if (moveLearn.isLearning) {
         this.stop(`Apprentissage d'attaque : ${moveLearn.reason}. Choisissez quelle attaque conserver ou oublier.`);
         return;
       }
+
       const diag = this.getScreenDialogueText(mmu);
-      if (diag.line1.toUpperCase().includes('NICKNAME') || diag.line2.toUpperCase().includes('NICKNAME')) {
-        // Si le clavier de surnom est ouvert, valider directement avec START
+      const isNickname = diag.line1.toUpperCase().includes('NICKNAME') || diag.line2.toUpperCase().includes('NICKNAME');
+      
+      if (isNickname) {
         await this.tapKey('start', 60);
         await this.wait(150);
-      } else {
-        await this.tapKey('b', 60);
-        await this.wait(100);
+        continue;
       }
+
+      const isBoxVisible = this.isTextBoxActiveOnScreen(mmu);
+      const joyIgnore = mmu.read(joyIgnoreAddr);
+
+      // Si la boîte de texte a complètement disparu et que wJoyIgnore == 0
+      if (!isBoxVisible && joyIgnore === 0 && i >= 2) {
+        break;
+      }
+
+      // Alterner A et B pour valider et fermer les boîtes de dialogue ("Got away safely!", etc.)
+      this.addLog('safety', `🏃 Fermeture du message de fuite/fin de combat [${i % 2 === 0 ? 'A' : 'B'}]...`);
+      await this.tapKey(i % 2 === 0 ? 'a' : 'b', 70);
+      await this.wait(120);
+    }
+    await this.wait(100);
+  }
+
+  /**
+   * Evaluates the level of the first Pokémon (Slot 1) after battle upon returning to overworld.
+   * If Slot 1 reached targetLevel:
+   * - Searches for the next Pokémon in the party with level < targetLevel.
+   * - Swaps Slot 1 with that Pokémon.
+   * - If all Pokémon in party reached targetLevel, stops the bot.
+   */
+  private async checkAndHandleTargetLevelSwitch(mmu: any): Promise<void> {
+    const partyStatus = this.getPartyStatus(mmu);
+    if (!partyStatus.isValid || partyStatus.monsHp.length === 0) return;
+
+    const targetLevel = this.targetLevel;
+    if (targetLevel <= 0) return;
+
+    const slot1 = partyStatus.monsHp[0];
+    if (!slot1) return;
+
+    this.addLog('info', `📊 Évaluation fin de combat : Slot 1 est au Niveau ${slot1.level} (Niveau max cible: ${targetLevel})`);
+
+    // Check if ALL Pokémon in the party have reached targetLevel
+    const allMonsReached = partyStatus.monsHp.every((mon) => mon.level >= targetLevel);
+    if (allMonsReached) {
+      this.stop(`🏆 Objectif atteint ! Tous les Pokémon de l'équipe ont atteint ou dépassé le niveau max ${targetLevel}.`);
+      return;
+    }
+
+    // Check if Slot 1 has reached targetLevel
+    if (slot1.level >= targetLevel) {
+      // Find the next Pokémon in the party (Slot 2..6) with level < targetLevel
+      let candidateIndex = -1;
+
+      // 1. Search alive mons from slot 2 onwards
+      for (let i = 1; i < partyStatus.monsHp.length; i++) {
+        const mon = partyStatus.monsHp[i];
+        if (mon.level < targetLevel && mon.curHp > 0) {
+          candidateIndex = i;
+          break;
+        }
+      }
+
+      // 2. If no alive mon found, search any mon with level < targetLevel
+      if (candidateIndex === -1) {
+        for (let i = 1; i < partyStatus.monsHp.length; i++) {
+          const mon = partyStatus.monsHp[i];
+          if (mon.level < targetLevel) {
+            candidateIndex = i;
+            break;
+          }
+        }
+      }
+
+      if (candidateIndex !== -1) {
+        const candidateMon = partyStatus.monsHp[candidateIndex];
+        this.addLog(
+          'info',
+          `🎓 [Niveau Max Atteint] Slot 1 (Niv. ${slot1.level}) a atteint le niveau max cible (${targetLevel}). Échange avec Slot ${candidateIndex + 1} (Niv. ${candidateMon.level})...`
+        );
+        await this.swapPartySlots(mmu, 0, candidateIndex);
+      } else {
+        this.stop(`🏆 Objectif atteint ! Tous les Pokémon de l'équipe ont atteint le niveau max ${targetLevel}.`);
+      }
+    }
+  }
+
+  /**
+   * Swaps two party slots in Overworld.
+   * Executes game UI key sequence (START -> PKMN -> SELECT on Slot A -> Move cursor to Slot B -> SELECT)
+   * and synchronizes GameBoy RAM memory structs.
+   */
+  private async swapPartySlots(mmu: any, indexA: number, indexB: number): Promise<boolean> {
+    if (indexA === indexB) return true;
+
+    try {
+      this.addLog('move', `🔄 Échange d'équipe : Slot ${indexA + 1} ↔️ Slot ${indexB + 1}...`);
+
+      const topMenuYAddr = resolveAddr(POKEMON_YELLOW_RAM.TOP_MENU_Y_EN, mmu);
+      const cursorAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_CURSOR_EN, mmu);
+      const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
+
+      // Open Start menu
+      await this.tapKey('start', 80);
+      await this.wait(220);
+
+      // Open PKMN menu
+      let openedParty = false;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const topY = mmu.read(topMenuYAddr);
+        if (topY === 1) {
+          openedParty = true;
+          break;
+        }
+        await this.tapKey('down', 60);
+        await this.wait(100);
+        await this.tapKey('a', 80);
+        await this.wait(200);
+      }
+
+      if (openedParty) {
+        let fade = 0;
+        while (mmu.read(joyIgnoreAddr) > 0 && fade < 10) {
+          await this.wait(60);
+          fade++;
+        }
+        await this.wait(150);
+
+        // Move cursor to indexA
+        let cur = mmu.read(cursorAddr);
+        while (cur !== indexA && cur < 6) {
+          if (cur < indexA) await this.tapKey('down', 60);
+          else await this.tapKey('up', 60);
+          await this.wait(100);
+          cur = mmu.read(cursorAddr);
+        }
+
+        // Press SELECT to highlight mon A
+        await this.tapKey('select', 80);
+        await this.wait(150);
+
+        // Move cursor to indexB
+        cur = mmu.read(cursorAddr);
+        while (cur !== indexB && cur < 6) {
+          if (cur < indexB) await this.tapKey('down', 60);
+          else await this.tapKey('up', 60);
+          await this.wait(100);
+          cur = mmu.read(cursorAddr);
+        }
+
+        // Press SELECT or A to swap
+        await this.tapKey('select', 80);
+        await this.wait(200);
+
+        // Exit menus (B twice)
+        await this.tapKey('b', 80);
+        await this.wait(200);
+        await this.tapKey('b', 80);
+        await this.wait(200);
+      }
+
+      // Synchronize RAM structs directly to guarantee complete desync-free consistency
+      this.swapPartyRAMStructs(mmu, indexA, indexB);
+      
+      const newParty = this.getPartyStatus(mmu);
+      const newSlot1Level = newParty.monsHp[0]?.level || 0;
+      this.addLog('info', `✨ Échange réussi ! Le nouveau Slot 1 est le Pokémon Niv. ${newSlot1Level}. Reprise de l'entraînement.`);
+      return true;
+    } catch (e) {
+      console.error('Erreur swap party slots:', e);
+      this.swapPartyRAMStructs(mmu, indexA, indexB);
+      return true;
+    }
+  }
+
+  private swapPartyRAMStructs(mmu: any, indexA: number, indexB: number): void {
+    if (!mmu || indexA === indexB) return;
+
+    const countAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_COUNT_EN, mmu);
+    const count = mmu.read(countAddr);
+    if (indexA < 0 || indexA >= count || indexB < 0 || indexB >= count) return;
+
+    const speciesBase = countAddr + 1; // 0xD164
+    const monBase = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_BASE_EN, mmu); // 0xD16B
+    const otBase = monBase + 6 * 44; // 0xD273
+    const nickBase = otBase + 6 * 11; // 0xD2B5
+
+    // 1. Swap species byte
+    const spA = mmu.read(speciesBase + indexA);
+    const spB = mmu.read(speciesBase + indexB);
+    mmu.write(speciesBase + indexA, spB);
+    mmu.write(speciesBase + indexB, spA);
+
+    // 2. Swap 44-byte mon struct
+    for (let offset = 0; offset < 44; offset++) {
+      const addrA = monBase + indexA * 44 + offset;
+      const addrB = monBase + indexB * 44 + offset;
+      const valA = mmu.read(addrA);
+      const valB = mmu.read(addrB);
+      mmu.write(addrA, valB);
+      mmu.write(addrB, valA);
+    }
+
+    // 3. Swap 11-byte OT name
+    for (let offset = 0; offset < 11; offset++) {
+      const addrA = otBase + indexA * 11 + offset;
+      const addrB = otBase + indexB * 11 + offset;
+      const valA = mmu.read(addrA);
+      const valB = mmu.read(addrB);
+      mmu.write(addrA, valB);
+      mmu.write(addrB, valA);
+    }
+
+    // 4. Swap 11-byte Nickname
+    for (let offset = 0; offset < 11; offset++) {
+      const addrA = nickBase + indexA * 11 + offset;
+      const addrB = nickBase + indexB * 11 + offset;
+      const valA = mmu.read(addrA);
+      const valB = mmu.read(addrB);
+      mmu.write(addrA, valB);
+      mmu.write(addrB, valA);
     }
   }
 
@@ -1243,6 +1599,16 @@ export class SimpleTrainerBot {
    * Overworld Behavior (Pokemon Yellow RAM coordinates):
    */
   private async handleOverworld(mmu: any): Promise<void> {
+    // Si une boîte de texte est encore présente sur la carte (ex: "Got away safely!"), la fermer immédiatement au lieu de marcher
+    if (this.isTextBoxActiveOnScreen(mmu)) {
+      this.addLog('safety', '🏃 Dialogue/Texte actif sur la carte -> Fermeture [A/B]...');
+      await this.tapKey('a', 70);
+      await this.wait(100);
+      await this.tapKey('b', 70);
+      await this.wait(120);
+      return;
+    }
+
     const xAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_X_EN, mmu);
     const yAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_Y_EN, mmu);
     const playerX = mmu.read(xAddr);
@@ -1285,6 +1651,52 @@ export class SimpleTrainerBot {
    * Battle Behavior (Pokemon Yellow RAM moves & PP):
    */
   private async handleBattle(mmu: any): Promise<void> {
+    const partyStatus = this.getPartyStatus(mmu);
+
+    // Mode Entraînement 1er Pokémon : S'il ne reste qu'un seul Pokémon en vie (Slot 1), fuite immédiate !
+    if (this.mode === 'train_slot_1' && partyStatus.totalMons > 1 && partyStatus.aliveMons <= 1) {
+      if (this.isItemBagOpen(mmu)) {
+        this.addLog('safety', '🛡️ Sac d\'objets détecté en fuite -> Fermeture immédiate [B]');
+        await this.tapKey('b', 70);
+        await this.wait(140);
+        return;
+      }
+
+      if (this.isBattleMenu2x2Visible(mmu)) {
+        this.addLog('safety', '🏃 [Sécurité Entraînement] 1 seul Pokémon en vie (Slot 1) ! Fuite du combat [FUITE]...');
+        const isAlignedOnRun = await this.ensureBattleMenu2x2Cursor(mmu, 'RUN');
+        if (isAlignedOnRun) {
+          await this.tapKey('a', 70);
+          await this.wait(180);
+        }
+        return;
+      }
+
+      if (this.isMoveSubMenuVisible(mmu)) {
+        await this.tapKey('b', 70);
+        await this.wait(140);
+        return;
+      }
+
+      const diag = this.getScreenDialogueText(mmu);
+      if (diag.hasPromptArrow || this.isTextBoxActiveOnScreen(mmu)) {
+        this.addLog('safety', '🏃 Purge du message de fuite ("Got away safely!") [A/B]...');
+        await this.tapKey('a', 70);
+        await this.wait(100);
+        await this.tapKey('b', 70);
+        await this.wait(120);
+        return;
+      }
+
+      // Si le menu 2x2 est fermé après avoir cliqué sur FUITE (ex: message "Got away safely!"), appuyer sur A puis B
+      this.addLog('safety', '🏃 Purge du message de fuite ("Got away safely!") [A/B]...');
+      await this.tapKey('a', 70);
+      await this.wait(100);
+      await this.tapKey('b', 70);
+      await this.wait(140);
+      return;
+    }
+
     const movesAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_MON_MOVES_EN, mmu);
     const ppAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_MON_PP_EN, mmu);
 
@@ -1360,53 +1772,51 @@ export class SimpleTrainerBot {
     const diag = this.getScreenDialogueText(mmu);
     if (diag.hasPromptArrow) {
       await this.tapKey('a', 70);
+      await this.wait(80);
       return;
     }
     
-    // Attendre simplement que les animations ou transitions de menu se terminent
+    // Si nous sommes en combat hors-menu (texte ou transition), une impulsion [A] fait avancer les dialogues
+    await this.tapKey('a', 60);
     await this.wait(100);
   }
 
   /**
-   * Verified Move Selection in Battle Sub-menu (4 moves vertical list):
-   * Guarantees the cursor is strictly on targetSlot (0 = Slot 1, 1 = Slot 2, etc.)
-   * and executes validation with [A].
+   * Move Selection in Battle Sub-menu (4 moves vertical list):
+   * In Pokemon Gen 1, opening the FIGHT menu always places the cursor on Move 1 (Slot 0).
+   * For Slot 0 (default move), we press [A] directly with zero directional inputs (preventing wrap-around).
+   * For other slots (1..3), we move down sequentially from Slot 0 to reach targetSlot and confirm with [A].
    */
   private async selectMoveInSubMenu(mmu: any, targetSlot: number): Promise<void> {
-    const cur = this.getMoveSubMenuCursor(mmu);
-
-    if (cur !== targetSlot) {
-      if (cur > targetSlot) {
-        const steps = cur - targetSlot;
-        for (let i = 0; i < steps; i++) {
-          await this.tapKey('up', 60);
-          await this.wait(100);
-        }
-      } else {
-        const steps = targetSlot - cur;
-        for (let i = 0; i < steps; i++) {
-          await this.tapKey('down', 60);
-          await this.wait(100);
-        }
-      }
+    if (targetSlot === 0) {
+      // Slot 1 (Attaque 1) est sélectionné par défaut -> validation directe avec [A]
+      await this.tapKey('a', 80);
+      await this.wait(200);
+      return;
     }
 
-    // Directly validate confirmed move selection with [A]
-    await this.tapKey('a', 90);
-    await this.wait(250);
+    // Pour les capacités suivantes (Slot 2, 3, 4) : descente contrôlée depuis le Slot 0
+    for (let i = 0; i < targetSlot; i++) {
+      await this.tapKey('down', 60);
+      await this.wait(120);
+    }
+
+    // Validation de la capacité sélectionnée avec [A]
+    await this.tapKey('a', 80);
+    await this.wait(200);
   }
 
   /**
    * Joypad Key Emulation helpers
    */
-  private async tapKey(key: 'left' | 'right' | 'up' | 'down' | 'a' | 'b' | 'start' | 'select', durationMs: number = 60): Promise<void> {
+  private async tapKey(key: 'left' | 'right' | 'up' | 'down' | 'a' | 'b' | 'start' | 'select', durationMs: number = 70): Promise<void> {
     if (!this.emulator) return;
     this.emulator.setJoypad(key, true);
     await new Promise((res) => setTimeout(res, durationMs));
     if (this.emulator) {
       this.emulator.setJoypad(key, false);
     }
-    await new Promise((res) => setTimeout(res, 20));
+    await new Promise((res) => setTimeout(res, 30));
   }
 
   private async wait(ms: number): Promise<void> {

@@ -3,7 +3,22 @@ import JSZip from 'jszip';
 import { RomItem } from '../emulator/types';
 import { StorageService } from '../services/storage';
 import { isIpsFile, isBpsFile, isPatchFile, applyRomPatch, getRomPatchInfo } from '../utils/ipsPatcher';
-import { FolderOpen, Upload, Play, Trash2, HardDrive, Sparkles, X, Gamepad2, FileCheck, Wand2, AlertCircle, Layers } from 'lucide-react';
+import {
+  FolderOpen,
+  Upload,
+  Play,
+  Trash2,
+  HardDrive,
+  Sparkles,
+  X,
+  Gamepad2,
+  FileCheck,
+  Wand2,
+  AlertCircle,
+  Layers,
+  Plus,
+  ArrowRight
+} from 'lucide-react';
 
 interface RomLibraryModalProps {
   isOpen: boolean;
@@ -21,6 +36,8 @@ interface PatchOption {
   type: 'BPS' | 'IPS';
 }
 
+type LibraryTab = 'games' | 'upload';
+
 export function RomLibraryModal({
   isOpen,
   onClose,
@@ -30,6 +47,7 @@ export function RomLibraryModal({
   onDeleteRom,
   onNotify
 }: RomLibraryModalProps) {
+  const [activeTab, setActiveTab] = useState<LibraryTab>('games');
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -66,10 +84,9 @@ export function RomLibraryModal({
           if (charCode >= 32 && charCode <= 126) titleStr += String.fromCharCode(charCode);
         }
       }
-      let rawTitle = titleStr.trim() || romName.replace(/\.[^/.]+$/, '') || 'Jeu Game Boy';
+      const rawTitle = titleStr.trim() || romName.replace(/\.[^/.]+$/, '') || 'Jeu Game Boy';
       const isCgb = romData.length >= 0x0144 ? ((romData[0x0143] & 0x80) !== 0 || romData[0x0143] === 0xc0) : false;
 
-      // Extract patch information from explicit info or filename
       const detectedInfo = getRomPatchInfo({
         name: romName,
         title: rawTitle,
@@ -95,7 +112,7 @@ export function RomLibraryModal({
       onSelectRom(newRom);
       onNotify(
         detectedInfo.isPatched
-          ? `🎮 "${detectedInfo.baseTitle}" chargé avec ${detectedInfo.patchLabel || 'Patch'}!`
+          ? `🎮 "${detectedInfo.baseTitle}" lancé avec ${detectedInfo.patchLabel || 'Patch'}!`
           : `🎮 ROM "${detectedInfo.baseTitle}" chargée avec succès!`
       );
       onClose();
@@ -115,7 +132,6 @@ export function RomLibraryModal({
 
       if (file.name.toLowerCase().endsWith('.zip')) {
         const zip = await JSZip.loadAsync(file);
-        // Look for patch files (.bps, .ips)
         const patchEntries = Object.values(zip.files).filter(
           (f) => !f.dir && (f.name.toLowerCase().endsWith('.bps') || f.name.toLowerCase().endsWith('.ips'))
         );
@@ -141,7 +157,6 @@ export function RomLibraryModal({
           }
 
           if (loadedPatches.length > 0) {
-            // Sort so [FULL VERSION] comes first if available
             loadedPatches.sort((a, b) => {
               if (a.name.toLowerCase().includes('full')) return -1;
               if (b.name.toLowerCase().includes('full')) return 1;
@@ -164,7 +179,6 @@ export function RomLibraryModal({
         const arrayBuffer = await gbcFile.async('arraybuffer');
         romData = new Uint8Array(arrayBuffer);
 
-        // If zip contains both base ROM and a patch, auto patch!
         if (patchEntries.length > 0 && romData) {
           const mainPatch = patchEntries.find(p => p.name.toLowerCase().includes('full')) || patchEntries[0];
           const patchBuf = await mainPatch.async('arraybuffer');
@@ -308,28 +322,6 @@ export function RomLibraryModal({
     }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) processFile(file);
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) processFile(file);
-  };
-
   const handleDeleteRom = async (rom: RomItem, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
@@ -340,7 +332,7 @@ export function RomLibraryModal({
         onRefreshRoms();
       }
       setRomToDelete(null);
-      onNotify(`🗑️ "${rom.title || 'ROM'}" supprimée de la bibliothèque`);
+      onNotify(`🗑️ "${rom.title || 'ROM'}" supprimée`);
     } catch (err) {
       console.error(err);
       showModalError("Erreur lors de la suppression de la ROM.");
@@ -348,91 +340,126 @@ export function RomLibraryModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div 
-        className="relative w-full max-w-3xl bg-[#0f111a] border border-white/[0.1] rounded-3xl shadow-[0_25px_70px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col max-h-[90vh]"
-        onClick={(e) => e.stopPropagation()}
+    <div
+      id="rom-library-modal-backdrop"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        id="rom-library-modal-container"
+        className="relative w-full max-w-2xl bg-[#0c0d14] border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]"
       >
         {/* Header */}
-        <div className="px-6 py-4.5 border-b border-white/[0.08] flex items-center justify-between bg-[#090a10]/70">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-violet-600/10 border border-violet-500/30 flex items-center justify-center text-violet-400 shadow-[0_0_12px_rgba(139,92,246,0.15)]">
-              <FolderOpen className="w-5 h-5" />
+        <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between bg-[#08090f]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-violet-600/15 border border-violet-500/30 flex items-center justify-center text-violet-400">
+              <Gamepad2 className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-extrabold text-white tracking-wide">Bibliothèque de ROMs Locale</h2>
-              <p className="text-xs text-zinc-400">
-                Chargez des fichiers .gb, .gbc, .zip, .bps ou .ips et jouez instantanément
-              </p>
+              <h2 className="text-sm font-bold text-white tracking-wide">Bibliothèque de Jeux</h2>
+              <p className="text-[11px] text-zinc-400">Sélectionnez ou ajoutez des ROMs Game Boy (.gb, .gbc, .zip, .bps, .ips)</p>
             </div>
           </div>
+
           <button
+            id="rom-modal-close-btn"
             onClick={onClose}
-            className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-all cursor-pointer"
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
+            title="Fermer"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
+        </div>
+
+        {/* Segmented Navigation */}
+        <div className="p-2 border-b border-white/[0.06] bg-[#090a11]">
+          <div className="grid grid-cols-2 gap-1 p-1 bg-black/40 rounded-xl border border-white/[0.04]">
+            <button
+              id="rom-tab-games"
+              onClick={() => setActiveTab('games')}
+              className={`py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                activeTab === 'games'
+                  ? 'bg-violet-600 text-white shadow-sm font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]'
+              }`}
+            >
+              <HardDrive className="w-3.5 h-3.5 shrink-0" />
+              <span>Mes Jeux ({safeSavedRoms.length})</span>
+            </button>
+
+            <button
+              id="rom-tab-upload"
+              onClick={() => setActiveTab('upload')}
+              className={`py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                activeTab === 'upload'
+                  ? 'bg-violet-600 text-white shadow-sm font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]'
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5 shrink-0" />
+              <span>Importer / Patcher</span>
+            </button>
+          </div>
         </div>
 
         {/* Error Banner */}
         {errorMessage && (
-          <div className="px-6 py-3 bg-rose-950/60 border-b border-rose-500/30 text-rose-200 text-xs flex items-center justify-between animate-in fade-in">
+          <div className="px-5 py-2.5 bg-rose-950/60 border-b border-rose-500/30 text-rose-200 text-xs flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
               <span>{errorMessage}</span>
             </div>
             <button
               onClick={() => setErrorMessage(null)}
-              className="p-1 rounded-lg hover:bg-white/10 text-rose-300"
+              className="p-1 rounded-md hover:bg-white/10 text-rose-300 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
 
-        {/* Scrollable Content */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-6">
-          {/* Pending Patch Helper Section */}
+        {/* Modal Body */}
+        <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
+          {/* Active Patch Wizard */}
           {activePatch && (
-            <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-950/40 via-violet-950/40 to-indigo-950/40 border-2 border-amber-500/40 shadow-xl flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/30 to-violet-950/30 border border-amber-500/40 space-y-3">
               <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300">
-                    <Wand2 className="w-5 h-5" />
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300">
+                    <Wand2 className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 font-bold">
-                      Patch {activePatch.type} Détecté
+                    <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 font-bold">
+                      Patch {activePatch.type} Actif
                     </span>
-                    <h3 className="text-sm font-bold text-white mt-1">
-                      {activePatch.name}
-                    </h3>
+                    <h3 className="text-xs font-bold text-white mt-0.5">{activePatch.name}</h3>
                   </div>
                 </div>
                 <button
                   onClick={() => setAvailablePatches([])}
-                  className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer"
+                  className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer"
                   title="Annuler le patch"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              {/* Multi-patch variant selector if archive contained multiple patches */}
               {availablePatches.length > 1 && (
-                <div className="space-y-2 p-3 bg-black/30 rounded-xl border border-white/5">
-                  <div className="flex items-center gap-1.5 text-xs text-amber-300 font-semibold">
+                <div className="space-y-1.5 p-2.5 bg-black/40 rounded-lg border border-white/5">
+                  <span className="text-[11px] text-amber-300 font-semibold flex items-center gap-1.5">
                     <Layers className="w-3.5 h-3.5" />
-                    <span>Choisir la variante du Patch ({availablePatches.length} disponibles dans l'archive) :</span>
-                  </div>
-                  <div className="flex flex-wrap gap-2 pt-1">
+                    Variante :
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
                     {availablePatches.map((patch, idx) => (
                       <button
                         key={idx}
                         onClick={() => setSelectedPatchIndex(idx)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
                           selectedPatchIndex === idx
-                            ? 'bg-amber-400 text-zinc-950 shadow-md shadow-amber-400/20 font-bold'
+                            ? 'bg-amber-400 text-black font-bold'
                             : 'bg-white/5 hover:bg-white/10 text-zinc-300 border border-white/10'
                         }`}
                       >
@@ -443,40 +470,26 @@ export function RomLibraryModal({
                 </div>
               )}
 
-              <div className="p-3 bg-black/40 rounded-xl border border-white/5 text-xs text-zinc-300 space-y-1">
-                <div className="flex items-center gap-1.5 text-amber-300 font-semibold">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>Comment appliquer ce ROM Hack ?</span>
-                </div>
-                <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Un fichier <code>.{activePatch.type.toLowerCase()}</code> est un patch qui modifie le jeu de base.
-                  Pour y jouer, sélectionnez votre ROM originale de <strong>Pokémon Version Jaune</strong> (<code>.gbc</code> ou <code>.zip</code>) ci-dessous. Le jeu sera généré et lancé automatiquement !
-                </p>
-              </div>
-
-              {/* Option 1: Apply on an already saved ROM if available */}
+              {/* Apply onto saved ROM */}
               {safeSavedRoms.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-300">
-                    Appliquer sur une ROM de votre bibliothèque :
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-zinc-300 uppercase tracking-wider block">
+                    Appliquer sur un jeu de la bibliothèque :
                   </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                     {safeSavedRoms.map((rom) => (
                       <button
                         key={rom.id}
                         disabled={isProcessing}
                         onClick={() => handleApplyPatchToRom(rom)}
-                        className="p-2.5 rounded-xl bg-white/[0.04] hover:bg-amber-500/20 border border-white/10 hover:border-amber-400/50 text-left transition-all flex items-center justify-between group cursor-pointer"
+                        className="p-2 rounded-lg bg-white/[0.03] hover:bg-amber-500/15 border border-white/[0.08] hover:border-amber-400/40 text-left transition-all flex items-center justify-between group cursor-pointer"
                       >
-                        <div className="truncate mr-2">
-                          <p className="text-xs font-bold text-white group-hover:text-amber-300 truncate">
-                            {rom.title || rom.name || 'ROM'}
-                          </p>
-                          <p className="text-[10px] text-zinc-400">
-                            {((rom.size || 0) / 1024).toFixed(0)} KB • {rom.name || ''}
+                        <div className="min-w-0 pr-2">
+                          <p className="text-xs font-semibold text-white group-hover:text-amber-300 truncate">
+                            {rom.title || rom.name}
                           </p>
                         </div>
-                        <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-500/20 text-amber-300 flex-shrink-0 group-hover:bg-amber-500 group-hover:text-black transition-colors">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 group-hover:bg-amber-400 group-hover:text-black transition-colors shrink-0">
                           Patcher
                         </span>
                       </button>
@@ -485,18 +498,15 @@ export function RomLibraryModal({
                 </div>
               )}
 
-              {/* Option 2: Upload base ROM from computer */}
+              {/* Upload base ROM from computer */}
               <div>
-                <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block mb-1.5">
-                  Ou charger le fichier original de Pokémon Yellow (.gbc) depuis votre appareil :
-                </span>
                 <button
                   disabled={isProcessing}
                   onClick={() => baseRomInputRef.current?.click()}
-                  className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.99]"
+                  className="w-full py-2 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
                 >
-                  <Upload className="w-4 h-4" />
-                  <span>Sélectionner Pokémon Jaune (.gbc / .zip) & Patcher automatiquement</span>
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Sélectionner Pokémon Jaune original (.gbc / .zip)</span>
                 </button>
                 <input
                   type="file"
@@ -512,170 +522,210 @@ export function RomLibraryModal({
             </div>
           )}
 
-          {/* Drag and Drop Zone */}
-          <div
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-2xl p-7 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3.5 ${
-              isDragging
-                ? 'border-violet-400 bg-violet-950/30 shadow-[0_0_20px_rgba(139,92,246,0.25)]'
-                : 'border-white/[0.12] bg-white/[0.02] hover:border-violet-500/50 hover:bg-violet-950/10'
-            }`}
-          >
-            <div className="w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/[0.1] flex items-center justify-center text-violet-400 shadow-inner">
-              <Upload className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-zinc-200">
-                {isProcessing ? 'Traitement en cours...' : 'Glissez-déposez un fichier ROM (.gb, .gbc, .zip) ou Patch (.bps, .ips)'}
-              </p>
-              <p className="text-xs text-zinc-400 mt-1">
-                Formats supportés : .gb, .gbc, .zip, .bps, .ips (Auto-patching des ROM Hacks BPS & IPS inclus !)
-              </p>
-            </div>
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".gb,.gbc,.zip,.ips,.bps"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-          </div>
+          {/* TAB 1: SAVED GAMES LIST */}
+          {activeTab === 'games' && (
+            <div className="space-y-3">
+              {safeSavedRoms.length > 0 ? (
+                <div className="space-y-2">
+                  {safeSavedRoms.map((rom) => {
+                    const isConfirming = romToDelete?.id === rom.id;
+                    const patchInfo = getRomPatchInfo(rom);
 
-          {/* User Saved ROMs in IndexedDB */}
-          {safeSavedRoms.length > 0 ? (
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <HardDrive className="w-4 h-4 text-violet-400" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300">
-                  Mes ROMs Enregistrées ({safeSavedRoms.length})
-                </h3>
-              </div>
-
-              <div className="space-y-2.5">
-                {safeSavedRoms.map((rom) => {
-                  const isConfirming = romToDelete?.id === rom.id;
-                  const patchInfo = getRomPatchInfo(rom);
-
-                  return (
-                    <div
-                      key={rom.id}
-                      onClick={() => {
-                        if (!isConfirming) {
-                          onSelectRom(rom);
-                          onNotify(`🎮 Chargement de ${patchInfo.baseTitle}`);
-                          onClose();
-                        }
-                      }}
-                      className={`p-3.5 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 group shadow-sm ${
-                        isConfirming
-                          ? 'bg-rose-950/40 border-rose-500/50'
-                          : 'bg-white/[0.02] border-white/[0.06] hover:border-violet-500/40 hover:bg-white/[0.05] cursor-pointer'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3.5 min-w-0">
-                        <div
-                          className={`w-10 h-10 rounded-xl border flex items-center justify-center flex-shrink-0 ${
-                            patchInfo.isPatched
-                              ? 'bg-violet-500/15 border-violet-500/30 text-violet-400'
-                              : 'bg-white/[0.04] border-white/[0.08] text-violet-400'
-                          }`}
-                        >
-                          {patchInfo.isPatched ? (
-                            <Wand2 className="w-5 h-5 text-violet-300" />
-                          ) : (
-                            <FileCheck className="w-5 h-5" />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h4 className="text-sm font-bold text-white group-hover:text-violet-300 transition-colors truncate">
-                              {patchInfo.baseTitle}
-                            </h4>
-                            {patchInfo.isPatched && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-extrabold bg-gradient-to-r from-violet-500/25 to-fuchsia-500/25 text-violet-200 border border-violet-500/40 shadow-sm flex-shrink-0">
-                                <Sparkles className="w-2.5 h-2.5 text-violet-300" />
-                                {patchInfo.patchLabel || 'Patch Actif'}
-                              </span>
-                            )}
-                            {rom.isCGB ? (
-                              <span className="px-2 py-0.5 rounded-md text-[9px] font-extrabold bg-violet-500/20 text-violet-300 border border-violet-500/30 flex-shrink-0">
-                                COLOR
-                              </span>
+                    return (
+                      <div
+                        key={rom.id}
+                        onClick={() => {
+                          if (!isConfirming) {
+                            onSelectRom(rom);
+                            onNotify(`🎮 Chargement de ${patchInfo.baseTitle}`);
+                            onClose();
+                          }
+                        }}
+                        className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 group cursor-pointer ${
+                          isConfirming
+                            ? 'bg-rose-950/40 border-rose-500/50'
+                            : 'bg-white/[0.02] border-white/[0.05] hover:border-violet-500/50 hover:bg-white/[0.04]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div
+                            className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${
+                              patchInfo.isPatched
+                                ? 'bg-violet-500/15 border-violet-500/30 text-violet-300'
+                                : 'bg-white/[0.04] border-white/[0.08] text-violet-400'
+                            }`}
+                          >
+                            {patchInfo.isPatched ? (
+                              <Wand2 className="w-4 h-4" />
                             ) : (
-                              <span className="px-2 py-0.5 rounded-md text-[9px] font-extrabold bg-zinc-800 text-zinc-300 border border-zinc-700 flex-shrink-0">
-                                DMG
-                              </span>
+                              <FileCheck className="w-4 h-4" />
                             )}
                           </div>
-                          <p className="text-xs text-zinc-400 mt-0.5 truncate">
-                            {((rom.size || 0) / 1024).toFixed(1)} KB • {patchInfo.isPatched ? `Modifié (${patchInfo.patchLabel}) • ` : ''}Joué {rom.lastPlayed ? new Date(rom.lastPlayed).toLocaleDateString() : 'Récemment'}
-                          </p>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <h4 className="text-xs font-bold text-white group-hover:text-violet-300 transition-colors truncate">
+                                {patchInfo.baseTitle}
+                              </h4>
+                              {patchInfo.isPatched && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-violet-500/20 text-violet-300 border border-violet-500/30 shrink-0">
+                                  <Sparkles className="w-2.5 h-2.5" />
+                                  {patchInfo.patchLabel || 'Patch'}
+                                </span>
+                              )}
+                              {rom.isCGB ? (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-violet-500/20 text-violet-300 border border-violet-500/30 shrink-0">
+                                  CGB
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-zinc-800 text-zinc-300 border border-zinc-700 shrink-0">
+                                  DMG
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
+                              {((rom.size || 0) / 1024).toFixed(0)} KB • Joué {rom.lastPlayed ? new Date(rom.lastPlayed).toLocaleDateString() : 'Récemment'}
+                            </p>
+                          </div>
                         </div>
-                      </div>
 
-                      {isConfirming ? (
-                        <div className="flex items-center gap-2 self-end sm:self-auto" onClick={(e) => e.stopPropagation()}>
-                          <span className="text-xs text-rose-300 font-semibold mr-1">
-                            Supprimer ?
-                          </span>
-                          <button
-                            onClick={(e) => handleDeleteRom(rom, e)}
-                            className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30 transition-all cursor-pointer"
-                          >
-                            Oui, supprimer
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setRomToDelete(null);
-                            }}
-                            className="px-2.5 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
-                          >
-                            Annuler
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 self-end sm:self-auto">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setRomToDelete(rom);
-                            }}
-                            title="Supprimer la ROM"
-                            className="p-2 rounded-xl bg-white/[0.04] hover:bg-rose-950/60 text-zinc-400 hover:text-rose-400 border border-white/[0.06] transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                          <button className="px-3.5 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-[0_0_12px_rgba(139,92,246,0.3)] transition-all cursor-pointer">
-                            <Play className="w-3.5 h-3.5 fill-current" />
-                            Lancer
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <div className="py-8 px-4 text-center rounded-2xl bg-white/[0.02] border border-white/[0.06] flex flex-col items-center justify-center gap-2">
-              <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-zinc-500">
-                <Gamepad2 className="w-5 h-5" />
-              </div>
-              <p className="text-sm font-semibold text-zinc-300">
-                Aucune ROM dans votre bibliothèque
-              </p>
-              <p className="text-xs text-zinc-500 max-w-sm">
-                Glissez-déposez ou sélectionnez votre fichier de jeu (.gb, .gbc, .zip) ci-dessus pour l'ajouter et commencer votre partie.
-              </p>
+                        {/* Actions */}
+                        {isConfirming ? (
+                          <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={(e) => handleDeleteRom(rom, e)}
+                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              Confirmer
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRomToDelete(null);
+                              }}
+                              className="px-2 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 text-[11px] transition-colors cursor-pointer"
+                            >
+                              Annuler
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRomToDelete(rom);
+                              }}
+                              title="Supprimer"
+                              className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-rose-950/40 border border-transparent hover:border-rose-500/20 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold flex items-center gap-1 shadow-sm transition-colors cursor-pointer">
+                              <Play className="w-3 h-3 fill-current" />
+                              <span>Jouer</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="py-8 px-4 text-center rounded-xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center gap-2">
+                  <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-zinc-400">
+                    <Gamepad2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-zinc-200">Aucun jeu enregistré</p>
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                      Importez votre première ROM pour commencer votre partie
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('upload')}
+                    className="mt-2 px-3.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Ajouter une ROM</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
+
+          {/* TAB 2: UPLOAD & DRAG & DROP */}
+          {activeTab === 'upload' && (
+            <div className="space-y-3">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) processFile(file);
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2.5 ${
+                  isDragging
+                    ? 'border-violet-400 bg-violet-950/30'
+                    : 'border-white/[0.1] bg-white/[0.02] hover:border-violet-500/50 hover:bg-white/[0.04]'
+                }`}
+              >
+                <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-violet-400">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-zinc-200">
+                    {isProcessing ? 'Traitement en cours...' : 'Glissez-déposez un fichier de jeu ou cliquez pour parcourir'}
+                  </p>
+                  <p className="text-[11px] text-zinc-400 mt-0.5">
+                    Formats acceptés : <span className="text-zinc-300 font-mono">.gb, .gbc, .zip, .bps, .ips</span>
+                  </p>
+                </div>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".gb,.gbc,.zip,.ips,.bps"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) processFile(file);
+                  }}
+                  className="hidden"
+                />
+              </div>
+
+              {/* Informative Note */}
+              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] flex items-start gap-2.5">
+                <Sparkles className="w-4 h-4 text-violet-400 shrink-0 mt-0.5" />
+                <div className="text-[11px] text-zinc-400 leading-relaxed">
+                  <strong className="text-zinc-200 block mb-0.5">Patchs & ROM Hacks automatiques :</strong>
+                  Vous pouvez déposer directement une archive <code className="text-zinc-300">.zip</code> ou un fichier <code className="text-zinc-300">.bps / .ips</code> (comme Pokémon Special Eevee Edition). Le système appliquera automatiquement les modifications.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-white/[0.06] bg-[#08090f] flex items-center justify-between">
+          <span className="text-[11px] text-zinc-400 hidden sm:inline">
+            Stockage 100% local dans votre navigateur (IndexedDB)
+          </span>
+          <button
+            id="rom-modal-close-footer-btn"
+            onClick={onClose}
+            className="px-5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer ml-auto"
+          >
+            Fermer
+          </button>
         </div>
       </div>
     </div>
   );
 }
-

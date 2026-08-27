@@ -15,6 +15,11 @@ interface RamViewerProps {
   isBotRunning?: boolean;
   botStartTime?: number | null;
   botMode?: TrainerBotMode;
+  navEngine?: LocalNavigationEngine;
+  isHealRunning?: boolean;
+  healStartTime?: number | null;
+  healProgress?: AutoHealProgress | null;
+  onToggleAutoHeal?: () => void;
 }
 
 // ----------------------------------------------------
@@ -179,12 +184,24 @@ export const RamViewer = React.memo(function RamViewer({
   emulator,
   isBotRunning,
   botStartTime,
-  botMode
+  botMode,
+  navEngine: externalNavEngine,
+  isHealRunning: externalIsHealRunning,
+  healStartTime: externalHealStartTime,
+  healProgress: externalHealProgress,
+  onToggleAutoHeal: externalToggleAutoHeal
 }: RamViewerProps) {
-  const navEngineRef = useRef<LocalNavigationEngine>(new LocalNavigationEngine());
-  const [healProgress, setHealProgress] = useState<AutoHealProgress | null>(null);
-  const [isHealRunning, setIsHealRunning] = useState<boolean>(false);
-  const [healStartTime, setHealStartTime] = useState<number | null>(null);
+  const localNavEngineRef = useRef<LocalNavigationEngine>(new LocalNavigationEngine());
+  const navEngine = externalNavEngine || localNavEngineRef.current;
+
+  const [internalHealProgress, setInternalHealProgress] = useState<AutoHealProgress | null>(null);
+  const [internalIsHealRunning, setInternalIsHealRunning] = useState<boolean>(false);
+  const [internalHealStartTime, setInternalHealStartTime] = useState<number | null>(null);
+
+  const healProgress = externalHealProgress !== undefined ? externalHealProgress : internalHealProgress;
+  const isHealRunning = externalIsHealRunning !== undefined ? externalIsHealRunning : internalIsHealRunning;
+  const healStartTime = externalHealStartTime !== undefined ? externalHealStartTime : internalHealStartTime;
+
   const [navLogs, setNavLogs] = useState<NavLogEntry[]>([]);
   const [showLogs, setShowLogs] = useState<boolean>(true);
   const [showRadar, setShowRadar] = useState<boolean>(true);
@@ -195,31 +212,36 @@ export const RamViewer = React.memo(function RamViewer({
   const lastStateKeyRef = useRef<string>('');
 
   useEffect(() => {
-    navEngineRef.current.setEmulator(emulator);
-    navEngineRef.current.onProgress((progress) => {
-      setHealProgress(progress);
+    navEngine.setEmulator(emulator);
+    navEngine.onProgress((progress) => {
+      setInternalHealProgress(progress);
       if (progress.status === 'completed' || progress.status === 'error' || progress.status === 'idle') {
-        setIsHealRunning(false);
-        setHealStartTime(null);
+        setInternalIsHealRunning(false);
+        setInternalHealStartTime(null);
       } else {
-        setIsHealRunning(true);
+        setInternalIsHealRunning(true);
       }
     });
 
-    navEngineRef.current.onLogsUpdate = (logs) => {
+    navEngine.onLogsUpdate = (logs) => {
       setNavLogs(logs);
     };
-  }, [emulator]);
+  }, [emulator, navEngine]);
 
   const handleTriggerAutoHeal = async () => {
+    if (externalToggleAutoHeal) {
+      externalToggleAutoHeal();
+      return;
+    }
+
     if (isHealRunning) {
-      navEngineRef.current.stop();
-      setIsHealRunning(false);
-      setHealStartTime(null);
+      navEngine.stop();
+      setInternalIsHealRunning(false);
+      setInternalHealStartTime(null);
     } else {
-      setIsHealRunning(true);
-      setHealStartTime(Date.now());
-      await navEngineRef.current.executeAutoHealSequence(true);
+      setInternalIsHealRunning(true);
+      setInternalHealStartTime(Date.now());
+      await navEngine.executeAutoHealSequence(true);
     }
   };
 
@@ -255,8 +277,8 @@ export const RamViewer = React.memo(function RamViewer({
   }, [navLogs, isHealRunning, healProgress]);
 
   const handleClearLogs = useCallback(() => {
-    navEngineRef.current.clearLogs();
-  }, []);
+    navEngine.clearLogs();
+  }, [navEngine]);
 
   // Read full RAM navigation state & 2D radar
   const [navData, setNavData] = useState<{

@@ -4,6 +4,7 @@ import { VideoFilter } from '../emulator/types';
 import { Play, Pause } from 'lucide-react';
 import { RamViewer } from './RamViewer';
 import { TrainerBotMode } from '../services/simpleTrainerBot';
+import { LocalNavigationEngine, AutoHealProgress } from '../services/localNavigation';
 
 interface GbcDisplayProps {
   emulator: GameBoy | null;
@@ -15,6 +16,11 @@ interface GbcDisplayProps {
   isBotRunning?: boolean;
   botStartTime?: number | null;
   botMode?: TrainerBotMode;
+  navEngine?: LocalNavigationEngine;
+  isHealRunning?: boolean;
+  healStartTime?: number | null;
+  healProgress?: AutoHealProgress | null;
+  onToggleAutoHeal?: () => void;
 }
 
 export const GbcDisplay = React.memo(function GbcDisplay({
@@ -24,6 +30,11 @@ export const GbcDisplay = React.memo(function GbcDisplay({
   isBotRunning,
   botStartTime,
   botMode,
+  navEngine,
+  isHealRunning,
+  healStartTime,
+  healProgress,
+  onToggleAutoHeal,
   onScreenCapture,
   onOpenRomLibrary
 }: GbcDisplayProps) {
@@ -174,6 +185,11 @@ export const GbcDisplay = React.memo(function GbcDisplay({
         isBotRunning={isBotRunning} 
         botStartTime={botStartTime} 
         botMode={botMode}
+        navEngine={navEngine}
+        isHealRunning={isHealRunning}
+        healStartTime={healStartTime}
+        healProgress={healProgress}
+        onToggleAutoHeal={onToggleAutoHeal}
       />
     </div>
   );

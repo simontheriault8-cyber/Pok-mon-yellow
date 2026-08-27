@@ -189,6 +189,16 @@ export class LocalNavigationEngine {
       this.originTrainingCoords = { x: nav.playerX, y: nav.playerY };
       const curMapName = POKEMON_YELLOW_MAPS[nav.currentMapId] || `Map 0x${nav.currentMapId.toString(16)}`;
 
+      // Step 1.5: Purge de sécurité de toute boîte de dialogue résiduelle ("Got away safely!", etc.)
+      let prePurgeCount = 0;
+      const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
+      while ((this.isTextBoxActiveOnScreen(mmu) || mmu.read(joyIgnoreAddr) > 0) && prePurgeCount < 20 && this.isRunning) {
+        this.addLog('nav', `🏃 Purge du dialogue d'entrée ("Got away safely!") [${prePurgeCount % 2 === 0 ? 'A' : 'B'}]...`);
+        await this.tapKey(prePurgeCount % 2 === 0 ? 'a' : 'b', 70);
+        await this.wait(120);
+        prePurgeCount++;
+      }
+
       this.addLog(
         'nav',
         `📍 Point de départ : ${curMapName} (${nav.playerX}, ${nav.playerY})`,
@@ -484,10 +494,10 @@ export class LocalNavigationEngine {
       const dist = Math.abs(curX - targetX) + Math.abs(curY - targetY);
       if (dist === 0) return true;
 
-      // Safety check: If a dialog box is unexpectedly active during movement, dismiss it with [B]!
+      // Safety check: If a dialog box is unexpectedly active during movement, dismiss it with alternating [B] / [A]!
       const joyIgnoreAddr = resolveAddr(POKEMON_YELLOW_RAM.JOY_IGNORE_EN, mmu);
       if (this.isTextBoxActiveOnScreen(mmu) || mmu.read(joyIgnoreAddr) > 0) {
-        await this.tapKey('b', 70);
+        await this.tapKey(maxSteps % 2 === 0 ? 'b' : 'a', 70);
         await this.wait(140);
         continue;
       }
@@ -1056,32 +1066,20 @@ export class LocalNavigationEngine {
 
     // Battle finished: finalize escape and return cleanly to Overworld navigation
     if (!this.isBattleActive(mmu)) {
-      this.addLog('nav', '🏃💨 Fuite réussie avec succès ! Reprise immédiate du trajet.');
-      // Wait for screen fade / joypad ready
-      let fadeCount = 0;
-      while (mmu.read(joyIgnoreAddr) > 0 && fadeCount < 25 && this.isRunning) {
+      this.addLog('nav', '🏃💨 Fuite réussie avec succès ! Nettoyage des dialogues...');
+      let purgeCount = 0;
+      while ((this.isTextBoxActiveOnScreen(mmu) || mmu.read(joyIgnoreAddr) > 0) && purgeCount < 25 && this.isRunning) {
         const moveLearn = this.detectMoveLearnPrompt(mmu);
         if (moveLearn.isLearning) {
           this.stop();
           this.addLog('error', `🛑 Arrêt automatique : ${moveLearn.reason}. Choisissez quelle attaque conserver.`);
           return;
         }
-        await this.tapKey('b', 50);
-        await this.wait(60);
-        fadeCount++;
+        await this.tapKey(purgeCount % 2 === 0 ? 'a' : 'b', 70);
+        await this.wait(120);
+        purgeCount++;
       }
-      // Extra B presses to clear any remaining dialog boxes
-      for (let i = 0; i < 3; i++) {
-        const moveLearn = this.detectMoveLearnPrompt(mmu);
-        if (moveLearn.isLearning) {
-          this.stop();
-          this.addLog('error', `🛑 Arrêt automatique : ${moveLearn.reason}. Choisissez quelle attaque conserver.`);
-          return;
-        }
-        await this.tapKey('b', 50);
-        await this.wait(80);
-      }
-      await this.wait(200);
+      await this.wait(100);
     }
   }
 

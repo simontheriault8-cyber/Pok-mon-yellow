@@ -17,6 +17,7 @@ import { TvReceiver } from './components/TvReceiver';
 import { CastService } from './services/cast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SimpleTrainerBot, BotLogEntry, TrainerBotState, TrainerBotMode, BOT_MODES } from './services/simpleTrainerBot';
+import { LocalNavigationEngine, AutoHealProgress } from './services/localNavigation';
 import { BotLogModal } from './components/BotLogModal';
 
 export default function App() {
@@ -44,10 +45,29 @@ export default function App() {
     }
     return 'continuous_battle';
   });
+  const [targetLevel, setTargetLevel] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('pokemon_yellow_bot_target_level');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 1 && val <= 100) return val;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return 50;
+  });
   const [botLogs, setBotLogs] = useState<BotLogEntry[]>([]);
   const [showBotLogModal, setShowBotLogModal] = useState<boolean>(false);
   const showBotLogModalRef = useRef<boolean>(false);
   showBotLogModalRef.current = showBotLogModal;
+
+  // Auto-Heal Bot Engine (LocalNavigationEngine / Module 2)
+  const navEngineRef = useRef<LocalNavigationEngine>(new LocalNavigationEngine());
+  const autoHealFromTrainerBotRef = useRef<boolean>(false);
+  const [isHealRunning, setIsHealRunning] = useState<boolean>(false);
+  const [healProgress, setHealProgress] = useState<AutoHealProgress | null>(null);
+  const [healStartTime, setHealStartTime] = useState<number | null>(null);
 
   const handleOpenBotLogs = useCallback(() => {
     setBotLogs(trainerBotRef.current.getLogs());
@@ -116,6 +136,7 @@ export default function App() {
     setEmulator(gb);
     trainerBotRef.current.setEmulator(gb);
     trainerBotRef.current.setMode(botMode);
+    trainerBotRef.current.setTargetLevel(targetLevel);
     trainerBotRef.current.onStateChange = (running, state) => {
       setIsBotRunning(running);
       setBotState(state);
@@ -128,6 +149,48 @@ export default function App() {
         setBotLogs(logs);
       }
     };
+    trainerBotRef.current.onAutoHealRequest = async () => {
+      autoHealFromTrainerBotRef.current = true;
+      setIsHealRunning(true);
+      setHealStartTime(Date.now());
+      showToast('🩺 Bot Soin activé par le Bot Entraînement ! Direction Centre Pokémon...');
+      const success = await navEngineRef.current.executeAutoHealSequence(true);
+      setIsHealRunning(false);
+      setHealStartTime(null);
+      if (success) {
+        showToast('✨ Équipe soignée et retour au point de départ ! Reprise du Bot Entraînement.');
+        setTimeout(() => {
+          if (trainerBotRef.current && !trainerBotRef.current.getIsRunning()) {
+            trainerBotRef.current.start();
+          }
+        }, 500);
+      }
+      autoHealFromTrainerBotRef.current = false;
+    };
+
+    // Initialize Auto-Heal Bot Engine
+    navEngineRef.current.setEmulator(gb);
+    navEngineRef.current.onProgress((progress) => {
+      setHealProgress(progress);
+      if (progress.status === 'completed' || progress.status === 'error' || progress.status === 'idle') {
+        setIsHealRunning(false);
+        setHealStartTime(null);
+
+        if (progress.status === 'completed' && autoHealFromTrainerBotRef.current) {
+          autoHealFromTrainerBotRef.current = false;
+          showToast('✨ Équipe soignée et retour au point de départ ! Reprise du Bot Entraînement.');
+          setTimeout(() => {
+            if (trainerBotRef.current && !trainerBotRef.current.getIsRunning()) {
+              trainerBotRef.current.start();
+            }
+          }, 400);
+        } else {
+          autoHealFromTrainerBotRef.current = false;
+        }
+      } else {
+        setIsHealRunning(true);
+      }
+    });
 
     // Load initial settings & stored ROMs in a single clean pass
     const initStorage = async () => {
@@ -409,8 +472,21 @@ export default function App() {
     showToast(`🤖 Mode Bot : ${modeInfo?.name || mode}`);
   };
 
+  const handleTargetLevelChange = (level: number) => {
+    const validLevel = Math.min(100, Math.max(1, level));
+    setTargetLevel(validLevel);
+    trainerBotRef.current.setTargetLevel(validLevel);
+    try {
+      localStorage.setItem('pokemon_yellow_bot_target_level', validLevel.toString());
+    } catch (e) {
+      console.error(e);
+    }
+    showToast(`🎯 Niveau max 1er Pokémon : Niv. ${validLevel}`);
+  };
+
   // Auto-Trainer Bot Toggle
   const handleToggleBot = () => {
+    autoHealFromTrainerBotRef.current = false;
     const willStart = !isBotRunning;
     trainerBotRef.current.toggle();
     if (willStart) {
@@ -420,6 +496,22 @@ export default function App() {
       showToast(`🟢 Bot activé ! Mode : ${modeInfo?.name || botMode}`);
     } else {
       showToast('⏹️ Bot arrêté');
+    }
+  };
+
+  // Auto-Heal Bot Toggle (Module 2: Pokémon Center navigation + Nurse Joy + Return)
+  const handleToggleAutoHeal = async () => {
+    autoHealFromTrainerBotRef.current = false;
+    if (isHealRunning) {
+      navEngineRef.current.stop();
+      setIsHealRunning(false);
+      setHealStartTime(null);
+      showToast('⏹️ Bot Soin arrêté');
+    } else {
+      setIsHealRunning(true);
+      setHealStartTime(Date.now());
+      showToast('🩺 Bot Soin activé : Direction Centre Pokémon !');
+      await navEngineRef.current.executeAutoHealSequence(true);
     }
   };
 
@@ -506,9 +598,14 @@ export default function App() {
         isCasting={isCasting}
         isBotRunning={isBotRunning}
         botMode={botMode}
+        targetLevel={targetLevel}
+        onTargetLevelChange={handleTargetLevelChange}
         onBotModeChange={handleBotModeChange}
         onToggleBot={handleToggleBot}
         onOpenBotLogs={handleOpenBotLogs}
+        isHealRunning={isHealRunning}
+        healProgress={healProgress}
+        onToggleAutoHeal={handleToggleAutoHeal}
         onToggleCast={handleToggleCast}
         onPlayPause={handleTogglePlayPause}
         onReset={handleReset}
@@ -534,6 +631,11 @@ export default function App() {
           isBotRunning={isBotRunning}
           botStartTime={trainerBotRef.current.getStartTime()}
           botMode={botMode}
+          navEngine={navEngineRef.current}
+          isHealRunning={isHealRunning}
+          healStartTime={healStartTime}
+          healProgress={healProgress}
+          onToggleAutoHeal={handleToggleAutoHeal}
           onOpenRomLibrary={() => setShowRomLibrary(true)}
         />
       </main>
