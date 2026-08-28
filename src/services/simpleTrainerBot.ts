@@ -74,6 +74,7 @@ export class SimpleTrainerBot {
   private switchCooldownUntil: number = 0;
   private consecutiveSafetyCount: number = 0;
   private activeMonIndex: number = 0;
+  private faintedSlotsInBattle: Set<number> = new Set();
   private hasSwitchedToLastMonInCurrentBattle: boolean = false;
   private hasEnteredBattleInCurrentBattle: boolean = false;
   private startTime: number | null = null;
@@ -199,6 +200,7 @@ export class SimpleTrainerBot {
     this.lastY = -1;
     this.wasInBattle = false;
     this.hasEnteredBattleInCurrentBattle = false;
+    this.faintedSlotsInBattle.clear();
     this.lastLoggedSlot = -1;
     this.isSwitchingPokemon = false;
     this.switchCooldownUntil = 0;
@@ -363,22 +365,23 @@ export class SimpleTrainerBot {
       // =========================================================================
       const partyStatus = this.getPartyStatus(mmu);
 
-      // Synchronize activeMonIndex from Game Boy RAM if available
-      if (inBattle) {
-        const playerMonAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_MON_NUMBER_EN, mmu);
-        const rawActiveMon = mmu.read(playerMonAddr);
-        if (rawActiveMon >= 0 && rawActiveMon < 6) {
-          this.activeMonIndex = rawActiveMon;
+      // Si le Pokémon actif est RÉELLEMENT K.O. en combat (combat engagé + PV = 0)
+      if (inBattle && this.hasEnteredBattleInCurrentBattle && curBattleHp === 0 && maxBattleHp > 0) {
+        this.faintedSlotsInBattle.add(this.activeMonIndex);
+        if (partyStatus.monsHp[this.activeMonIndex]) {
+          partyStatus.monsHp[this.activeMonIndex].curHp = 0;
         }
       }
 
-      // Si le Pokémon actif est RÉELLEMENT K.O. en combat (combat engagé + PV = 0)
-      if (inBattle && this.hasEnteredBattleInCurrentBattle && curBattleHp === 0 && maxBattleHp > 0) {
-        if (partyStatus.monsHp[this.activeMonIndex]) {
-          partyStatus.monsHp[this.activeMonIndex].curHp = 0;
-          partyStatus.aliveMons = partyStatus.monsHp.filter((m) => m.curHp > 0).length;
-          partyStatus.faintedMons = partyStatus.totalMons - partyStatus.aliveMons;
+      // Synchroniser tous les slots marqués K.O. durant le combat
+      if (inBattle && this.faintedSlotsInBattle.size > 0) {
+        for (const fSlot of this.faintedSlotsInBattle) {
+          if (partyStatus.monsHp[fSlot]) {
+            partyStatus.monsHp[fSlot].curHp = 0;
+          }
         }
+        partyStatus.aliveMons = partyStatus.monsHp.filter((m, idx) => m.curHp > 0 && !this.faintedSlotsInBattle.has(idx)).length;
+        partyStatus.faintedMons = partyStatus.totalMons - partyStatus.aliveMons;
       }
 
       if (partyStatus.isValid && now > this.switchCooldownUntil) {
@@ -437,6 +440,7 @@ export class SimpleTrainerBot {
           this.hasEnteredBattleInCurrentBattle = false;
           this.hasSwitchedToLastMonInCurrentBattle = false;
           this.activeMonIndex = 0;
+          this.faintedSlotsInBattle.clear();
           this.lastLoggedSlot = -1;
           const hpStr = maxBattleHp > 0 ? `${curBattleHp}/${maxBattleHp} PV` : 'Initialisation...';
           const modeInfo = BOT_MODES.find((m) => m.id === this.mode);
@@ -484,6 +488,7 @@ export class SimpleTrainerBot {
           this.hasEnteredBattleInCurrentBattle = false;
           this.hasSwitchedToLastMonInCurrentBattle = false;
           this.activeMonIndex = 0;
+          this.faintedSlotsInBattle.clear();
           this.lastLoggedSlot = -1;
           this.lastX = -1;
           this.lastY = -1;
@@ -703,7 +708,8 @@ export class SimpleTrainerBot {
         // En mode entraînement, on privilégie les Pokémon de la fin (ex: Slot 6, puis 5, 4...)
         // On évite le Slot 1 (index 0) car c'est lui qu'on entraîne
         for (let i = partyStatus.monsHp.length - 1; i >= 1; i--) {
-          if (partyStatus.monsHp[i].curHp > 0 && i !== this.activeMonIndex) {
+          const isFainted = this.faintedSlotsInBattle.has(i) || partyStatus.monsHp[i].curHp === 0 || i === this.activeMonIndex;
+          if (!isFainted && partyStatus.monsHp[i].curHp > 0) {
             nextAliveIndex = i;
             break;
           }
@@ -711,7 +717,8 @@ export class SimpleTrainerBot {
       } else {
         // Mode continu : du premier au dernier
         for (let i = 0; i < partyStatus.monsHp.length; i++) {
-          if (partyStatus.monsHp[i].curHp > 0 && (i !== this.activeMonIndex || partyStatus.monsHp[i].curHp > 0)) {
+          const isFainted = this.faintedSlotsInBattle.has(i) || partyStatus.monsHp[i].curHp === 0 || i === this.activeMonIndex;
+          if (!isFainted && partyStatus.monsHp[i].curHp > 0) {
             nextAliveIndex = i;
             break;
           }
@@ -854,6 +861,24 @@ export class SimpleTrainerBot {
       this.addLog('move', `✨ Curseur positionné sur Slot ${finalCursor + 1} -> Validation [A]`);
       await this.tapKey('a', 80);
       await this.wait(250);
+
+      // Vérification immédiate : si la sélection a échoué (ex: dialogue "Plus de volonté pour se battre !")
+      const diagAfterA = this.getScreenDialogueText(mmu);
+      const isRefusal = diagAfterA.hasPromptArrow || 
+        diagAfterA.line1.includes('will') || diagAfterA.line1.includes('fight') || 
+        diagAfterA.line1.includes('volont') || diagAfterA.line1.includes('combat') ||
+        diagAfterA.line2.includes('will') || diagAfterA.line2.includes('fight');
+
+      if (isRefusal) {
+        this.addLog('safety', `⚠️ Pokémon Slot ${finalCursor + 1} indisponible pour combattre. Marquage K.O. et recherche du suivant...`);
+        this.faintedSlotsInBattle.add(finalCursor);
+        await this.tapKey('b', 70);
+        await this.wait(150);
+        await this.tapKey('b', 70);
+        await this.wait(150);
+        this.switchCooldownUntil = Date.now() + 200;
+        return;
+      }
 
       // Étape 3 : Si un sous-menu inattendu (ENVOYER / STAT) est ouvert
       const postMenuY = mmu.read(topMenuYAddr);
