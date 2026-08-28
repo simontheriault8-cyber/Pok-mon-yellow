@@ -75,6 +75,7 @@ export class SimpleTrainerBot {
   private consecutiveSafetyCount: number = 0;
   private activeMonIndex: number = 0;
   private hasSwitchedToLastMonInCurrentBattle: boolean = false;
+  private hasEnteredBattleInCurrentBattle: boolean = false;
   private startTime: number | null = null;
   private targetLevel: number = 50; // Target level for slot 1 training rotation
 
@@ -197,6 +198,7 @@ export class SimpleTrainerBot {
     this.lastX = -1;
     this.lastY = -1;
     this.wasInBattle = false;
+    this.hasEnteredBattleInCurrentBattle = false;
     this.lastLoggedSlot = -1;
     this.isSwitchingPokemon = false;
     this.switchCooldownUntil = 0;
@@ -347,6 +349,12 @@ export class SimpleTrainerBot {
         const maxHpAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_MON_MAX_HP_EN, mmu);
         curBattleHp = (mmu.read(hpAddr) << 8) | mmu.read(hpAddr + 1);
         maxBattleHp = (mmu.read(maxHpAddr) << 8) | mmu.read(maxHpAddr + 1);
+
+        // Dès que le Pokémon actif entre en jeu avec des PV > 0 ou que le menu 2x2 apparaît,
+        // on confirme qu'on a dépassé l'animation d'introduction du combat.
+        if (curBattleHp > 0 || this.isBattleMenu2x2Visible(mmu)) {
+          this.hasEnteredBattleInCurrentBattle = true;
+        }
       }
 
       // =========================================================================
@@ -357,15 +365,15 @@ export class SimpleTrainerBot {
 
       // Synchronize activeMonIndex from Game Boy RAM if available
       if (inBattle) {
-      const playerMonAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_MON_NUMBER_EN, mmu);
+        const playerMonAddr = resolveAddr(POKEMON_YELLOW_RAM.PLAYER_MON_NUMBER_EN, mmu);
         const rawActiveMon = mmu.read(playerMonAddr);
         if (rawActiveMon >= 0 && rawActiveMon < 6) {
           this.activeMonIndex = rawActiveMon;
         }
       }
 
-      // Si le Pokémon actif est K.O. en combat, synchroniser immédiatement sa santé à 0
-      if (inBattle && curBattleHp === 0 && maxBattleHp > 0) {
+      // Si le Pokémon actif est RÉELLEMENT K.O. en combat (combat engagé + PV = 0)
+      if (inBattle && this.hasEnteredBattleInCurrentBattle && curBattleHp === 0 && maxBattleHp > 0) {
         if (partyStatus.monsHp[this.activeMonIndex]) {
           partyStatus.monsHp[this.activeMonIndex].curHp = 0;
           partyStatus.aliveMons = partyStatus.monsHp.filter((m) => m.curHp > 0).length;
@@ -404,9 +412,9 @@ export class SimpleTrainerBot {
 
       // =========================================================================
       // 3. ACTIVE MON FAINTED IN BATTLE -> AUTO-SWITCH HANDLER
-      // Si le Pokémon actif tombe K.O. en combat (PV = 0) et qu'il reste d'autres Pokémon vivants
+      // Si le Pokémon actif tombe RÉELLEMENT K.O. en combat (PV = 0) et qu'il reste d'autres Pokémon vivants
       // =========================================================================
-      if (inBattle && curBattleHp === 0 && maxBattleHp > 0) {
+      if (inBattle && this.hasEnteredBattleInCurrentBattle && curBattleHp === 0 && maxBattleHp > 0) {
         this.state = 'battling';
         this.notifyState();
 
@@ -426,6 +434,7 @@ export class SimpleTrainerBot {
       if (inBattle) {
         if (!this.wasInBattle) {
           this.wasInBattle = true;
+          this.hasEnteredBattleInCurrentBattle = false;
           this.hasSwitchedToLastMonInCurrentBattle = false;
           this.activeMonIndex = 0;
           this.lastLoggedSlot = -1;
@@ -472,6 +481,7 @@ export class SimpleTrainerBot {
       } else {
         if (this.wasInBattle) {
           this.wasInBattle = false;
+          this.hasEnteredBattleInCurrentBattle = false;
           this.hasSwitchedToLastMonInCurrentBattle = false;
           this.activeMonIndex = 0;
           this.lastLoggedSlot = -1;
@@ -1186,8 +1196,8 @@ export class SimpleTrainerBot {
           return;
         }
 
-        // Vérifier si le menu 2x2 ou l'écran d'équipe est affiché et prêt
-        if (this.isPartyScreenVisible(mmu) || this.isBattleMenu2x2Visible(mmu)) {
+        // Vérifier si le menu 2x2, le sous-menu d'attaque ou l'écran d'équipe est affiché et prêt
+        if (this.isPartyScreenVisible(mmu) || this.isBattleMenu2x2Visible(mmu) || this.isMoveSubMenuVisible(mmu)) {
           menuReady = true;
           break;
         }
@@ -1202,13 +1212,16 @@ export class SimpleTrainerBot {
         return;
       }
 
-      await this.wait(100);
+      await this.wait(120);
 
-      // Étape 2 : Si le sous-menu d'attaques est ouvert par inadvertance, revenir au menu principal avec [B]
-      const currentTopX = mmu.read(topMenuXAddr);
-      if ((currentTopX === 4 || currentTopX === 5) && !this.isPartyScreenVisible(mmu)) {
-        await this.tapKey('b', 60);
-        await this.wait(120);
+      // Étape 2 : Si le sous-menu d'attaques ou le sac est ouvert, revenir au menu principal 2x2 avec [B]
+      for (let retry = 0; retry < 5; retry++) {
+        if ((this.isMoveSubMenuVisible(mmu) || this.isItemBagOpen(mmu)) && !this.isPartyScreenVisible(mmu)) {
+          await this.tapKey('b', 70);
+          await this.wait(140);
+        } else {
+          break;
+        }
       }
 
       // Étape 3 : Naviguer vers PKMN et ouvrir l'écran d'équipe
@@ -1221,16 +1234,26 @@ export class SimpleTrainerBot {
           break;
         }
 
+        // Si le sous-menu d'attaque est ouvert, retour arrière immédiat avec [B] (ne jamais valider avec [A] !)
+        if (this.isMoveSubMenuVisible(mmu)) {
+          await this.tapKey('b', 70);
+          await this.wait(140);
+          navMenuAttempts++;
+          continue;
+        }
+
         // Si le sac d'objets est ouvert par mégarde, le fermer immédiatement avec [B]
         if (this.isItemBagOpen(mmu)) {
           this.addLog('safety', '🛡️ Fermeture automatique du sac d\'objets [B]');
           await this.tapKey('b', 70);
           await this.wait(140);
+          navMenuAttempts++;
+          continue;
         }
 
         // Vérification et alignement strict du curseur sur PKMN avant d'appuyer sur A
         const isAlignedOnPkmn = await this.ensureBattleMenu2x2Cursor(mmu, 'PKMN');
-        if (isAlignedOnPkmn) {
+        if (isAlignedOnPkmn && !this.isMoveSubMenuVisible(mmu)) {
           await this.tapKey('a', 70);
           await this.wait(220);
         } else {

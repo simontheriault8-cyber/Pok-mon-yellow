@@ -154,18 +154,21 @@ export default function App() {
       setIsHealRunning(true);
       setHealStartTime(Date.now());
       showToast('🩺 Bot Soin activé par le Bot Entraînement ! Direction Centre Pokémon...');
+      
       const success = await navEngineRef.current.executeAutoHealSequence(true);
+      
       setIsHealRunning(false);
       setHealStartTime(null);
+      autoHealFromTrainerBotRef.current = false;
+
       if (success) {
         showToast('✨ Équipe soignée et retour au point de départ ! Reprise du Bot Entraînement.');
         setTimeout(() => {
           if (trainerBotRef.current && !trainerBotRef.current.getIsRunning()) {
             trainerBotRef.current.start();
           }
-        }, 500);
+        }, 400);
       }
-      autoHealFromTrainerBotRef.current = false;
     };
 
     // Initialize Auto-Heal Bot Engine
@@ -175,18 +178,6 @@ export default function App() {
       if (progress.status === 'completed' || progress.status === 'error' || progress.status === 'idle') {
         setIsHealRunning(false);
         setHealStartTime(null);
-
-        if (progress.status === 'completed' && autoHealFromTrainerBotRef.current) {
-          autoHealFromTrainerBotRef.current = false;
-          showToast('✨ Équipe soignée et retour au point de départ ! Reprise du Bot Entraînement.');
-          setTimeout(() => {
-            if (trainerBotRef.current && !trainerBotRef.current.getIsRunning()) {
-              trainerBotRef.current.start();
-            }
-          }, 400);
-        } else {
-          autoHealFromTrainerBotRef.current = false;
-        }
       } else {
         setIsHealRunning(true);
       }
