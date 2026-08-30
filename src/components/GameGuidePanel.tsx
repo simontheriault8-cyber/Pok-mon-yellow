@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { GameBoy } from '../emulator/gameboy';
 import { GameGuideReader, GameGuideSnapshot } from '../services/gameGuideReader';
-import { TYPE_COLORS, PokemonType } from '../services/pokemonData';
+import { TYPE_COLORS, PokemonType, EncounterCategory, NATIONAL_DEX_MAP } from '../services/pokemonData';
 import {
   MapPin,
   Swords,
@@ -11,9 +11,13 @@ import {
   Sparkles,
   Zap,
   CheckCircle2,
-  AlertTriangle,
   Info,
-  ChevronRight,
+  Waves,
+  Fish,
+  Trees,
+  Check,
+  CircleDot,
+  Layers,
 } from 'lucide-react';
 
 interface GameGuidePanelProps {
@@ -22,6 +26,7 @@ interface GameGuidePanelProps {
 
 export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
   const [snapshot, setSnapshot] = useState<GameGuideSnapshot | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<'all' | EncounterCategory>('all');
 
   // Poll RAM guide data at 120ms intervals (lightweight, zero lag)
   useEffect(() => {
@@ -51,9 +56,9 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
       >
         <div className="flex items-center gap-2">
           <Compass className="w-4 h-4 text-emerald-400 animate-spin" />
-          <span className="font-medium text-zinc-300">Guide Kanto en direct</span>
+          <span className="font-medium text-zinc-300">Live Kanto Companion Guide</span>
         </div>
-        <span className="text-[11px] text-zinc-500">En attente de la partie...</span>
+        <span className="text-[11px] text-zinc-500">Waiting for game data...</span>
       </div>
     );
   }
@@ -63,15 +68,19 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
     return (
       <span
         key={type}
-        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border ${style.bg} ${style.text} ${style.border} tracking-wide`}
+        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border ${style.bg} ${style.text} ${style.border} tracking-wide whitespace-nowrap`}
       >
         {customText || type}
       </span>
     );
   };
 
+  const pokedexData = snapshot.pokedexData;
+  const ownedSet = new Set(pokedexData?.ownedDexIds || []);
+  const seenSet = new Set(pokedexData?.seenDexIds || []);
+
   // =========================================================================
-  // 1. COMBAT ACTIF (BATTLE GUIDE)
+  // 1. ACTIVE BATTLE GUIDE
   // =========================================================================
   if (snapshot.mode === 'battle' && snapshot.battleData?.isInBattle) {
     const { playerMon, enemyMon, tacticalAdvice, battleType } = snapshot.battleData;
@@ -90,12 +99,20 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
             </span>
             <span className="text-xs font-black uppercase tracking-wider text-rose-400 flex items-center gap-1">
               <Swords className="w-3.5 h-3.5" />
-              {battleType === 'trainer' ? 'Combat Dresseur' : 'Combat Pokémon Sauvage'}
+              {battleType === 'trainer' ? 'Trainer Battle' : 'Wild Pokémon Battle'}
             </span>
           </div>
-          <span className="text-[11px] font-semibold text-zinc-400 bg-white/[0.05] px-2 py-0.5 rounded-full border border-white/[0.06]">
-            Analyse Tactique
-          </span>
+          <div className="flex items-center gap-2">
+            {pokedexData && pokedexData.ownedCount > 0 && (
+              <span className="text-[10px] font-mono text-zinc-400 bg-white/[0.04] border border-white/[0.06] px-2 py-0.5 rounded-full flex items-center gap-1">
+                <CircleDot className="w-3 h-3 text-rose-400" />
+                <span>Pokédex: {pokedexData.ownedCount}/151</span>
+              </span>
+            )}
+            <span className="text-[11px] font-semibold text-zinc-400 bg-white/[0.05] px-2 py-0.5 rounded-full border border-white/[0.06]">
+              Tactical Analysis
+            </span>
+          </div>
         </div>
 
         {/* Combatants Grid */}
@@ -105,9 +122,9 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
             <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-2 space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-bold uppercase text-emerald-400 tracking-wider">
-                  Votre Pokémon
+                  Your Pokémon
                 </span>
-                <span className="text-[10px] font-mono text-zinc-400">Niv. {playerMon.level}</span>
+                <span className="text-[10px] font-mono text-zinc-400">Lv. {playerMon.level}</span>
               </div>
               <div className="font-extrabold text-sm text-zinc-100 truncate">{playerMon.name}</div>
               <div className="flex items-center gap-1 flex-wrap">
@@ -118,7 +135,7 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
               {/* HP Bar */}
               <div className="space-y-0.5 pt-0.5">
                 <div className="flex justify-between text-[10px] font-mono font-medium text-zinc-300">
-                  <span>PV</span>
+                  <span>HP</span>
                   <span>
                     {playerMon.curHp}/{playerMon.maxHp}
                   </span>
@@ -144,11 +161,34 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
             <div className="bg-rose-950/20 border border-rose-500/20 rounded-xl p-2 space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-bold uppercase text-rose-400 tracking-wider">
-                  Adversaire
+                  Opponent
                 </span>
-                <span className="text-[10px] font-mono text-rose-300">Niv. {enemyMon.level}</span>
+                <span className="text-[10px] font-mono text-rose-300">Lv. {enemyMon.level}</span>
               </div>
-              <div className="font-extrabold text-sm text-zinc-100 truncate">{enemyMon.name}</div>
+              <div className="font-extrabold text-sm text-zinc-100 truncate flex items-center justify-between">
+                <div className="flex items-center gap-1.5 truncate">
+                  <span className="truncate">{enemyMon.name}</span>
+                  {(() => {
+                    const eDexId = NATIONAL_DEX_MAP[enemyMon.name] || 0;
+                    if (eDexId > 0) {
+                      if (ownedSet.has(eDexId)) {
+                        return (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full text-[9px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 tracking-wider shrink-0">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                            Caught
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="inline-flex items-center px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-zinc-800/80 text-zinc-400 border border-white/[0.05] tracking-wider shrink-0">
+                          New!
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+              </div>
               <div className="flex items-center gap-1 flex-wrap">
                 {renderTypeBadge(enemyMon.type1)}
                 {enemyMon.type2 && renderTypeBadge(enemyMon.type2)}
@@ -162,7 +202,7 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
               {/* Opponent HP Bar */}
               <div className="space-y-0.5 pt-0.5">
                 <div className="flex justify-between text-[10px] font-mono font-medium text-zinc-300">
-                  <span>PV Restants</span>
+                  <span>Remaining HP</span>
                   <span>{enemyMon.hpPercent}%</span>
                 </div>
                 <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
@@ -189,7 +229,7 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-300">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>Faiblesses adverses (Attaques très efficaces) :</span>
+                <span>Opponent Weaknesses (Super effective moves):</span>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap pl-5">
                 {enemyMon.matchupReport.weaknesses.length > 0 ? (
@@ -198,13 +238,13 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
                       {renderTypeBadge(w.type)}
                       {w.multiplier >= 4 && (
                         <span className="text-[9px] font-extrabold text-rose-400 font-mono bg-rose-500/20 px-1 py-0.2 rounded border border-rose-500/30">
-                          x4!
+                          4x!
                         </span>
                       )}
                     </span>
                   ))
                 ) : (
-                  <span className="text-[11px] text-zinc-400 italic">Aucune faiblesse majeure</span>
+                  <span className="text-[11px] text-zinc-400 italic">No major weaknesses</span>
                 )}
               </div>
             </div>
@@ -214,14 +254,14 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
               <div className="space-y-1 pt-1 border-t border-white/[0.04]">
                 <div className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-400">
                   <ShieldAlert className="w-3.5 h-3.5 text-zinc-400" />
-                  <span>Résistances & Immunités (Attaques à éviter) :</span>
+                  <span>Resistances & Immunities (Attacks to avoid):</span>
                 </div>
                 <div className="flex items-center gap-1.5 flex-wrap pl-5">
                   {enemyMon.matchupReport.immunities.map((imm) => (
                     <span key={imm} className="flex items-center gap-1">
                       {renderTypeBadge(imm)}
                       <span className="text-[9px] font-bold text-zinc-400 font-mono bg-zinc-800 px-1 py-0.2 rounded">
-                        0x (Inutile)
+                        0x (No Effect)
                       </span>
                     </span>
                   ))}
@@ -249,7 +289,7 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
   }
 
   // =========================================================================
-  // 2. EXPLORATION OVERWORLD (LOCATION / ROUTE / GYM GUIDE)
+  // 2. OVERWORLD EXPLORATION (LOCATION / ROUTE / GYM / POKÉDEX GUIDE)
   // =========================================================================
   const { overworldData } = snapshot;
   if (!overworldData) return null;
@@ -257,12 +297,22 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
   const { mapName, locationCategory, wildEncounters, gymLeader, playerX, playerY, description } =
     overworldData;
 
+  // Filter wild encounters based on category tabs
+  const hasLand = wildEncounters?.some((m) => m.category === 'walk');
+  const hasSurf = wildEncounters?.some((m) => m.category === 'surf');
+  const hasFish = wildEncounters?.some((m) => m.category === 'fish');
+
+  const filteredEncounters = wildEncounters?.filter((m) => {
+    if (selectedCategory === 'all') return true;
+    return m.category === selectedCategory;
+  });
+
   return (
     <div
       id="game-guide-panel"
       className="w-full max-w-[540px] bg-zinc-950/95 border border-white/[0.1] rounded-2xl p-3 text-zinc-100 shadow-xl backdrop-blur-lg select-none space-y-2.5 mt-1"
     >
-      {/* Top Location Bar */}
+      {/* Top Location & Pokédex Bar */}
       <div className="flex items-center justify-between border-b border-white/[0.08] pb-2">
         <div className="flex items-center gap-2">
           <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
@@ -275,52 +325,184 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
             <div className="text-[10px] text-zinc-400 capitalize flex items-center gap-1.5">
               <span className="px-1.5 py-0.2 rounded bg-white/[0.06] text-zinc-300 font-medium">
                 {locationCategory === 'route'
-                  ? 'Zone Sauvage / Route'
+                  ? 'Wild Area / Route'
                   : locationCategory === 'city'
-                  ? 'Ville Principale'
+                  ? 'Major City / Town'
                   : locationCategory === 'dungeon'
-                  ? 'Grotte / Donjon'
+                  ? 'Cave / Dungeon'
                   : locationCategory === 'pokecenter'
-                  ? 'Centre Pokémon'
-                  : 'Bâtiment / Intérieur'}
+                  ? 'Pokémon Center'
+                  : 'Building / Interior'}
               </span>
-              <span>• Coords : ({playerX}, {playerY})</span>
+              <span>• Coords: ({playerX}, {playerY})</span>
             </div>
           </div>
         </div>
+
+        {/* Live Pokédex Status */}
+        {pokedexData && (
+          <div className="flex flex-col items-end gap-0.5">
+            <div className="flex items-center gap-1 text-[11px] font-bold text-zinc-200 bg-white/[0.04] border border-white/[0.08] px-2 py-1 rounded-lg">
+              <CircleDot className="w-3.5 h-3.5 text-rose-400" />
+              <span className="text-emerald-400 font-mono">{pokedexData.ownedCount}</span>
+              <span className="text-zinc-500 font-normal">/</span>
+              <span className="text-zinc-400 font-mono">151</span>
+              <span className="text-[9px] uppercase font-bold text-zinc-400 ml-0.5">Caught</span>
+            </div>
+            <span className="text-[9px] text-zinc-400">
+              Seen: <strong className="text-zinc-300 font-mono">{pokedexData.seenCount}</strong>
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* CASE 1: ROUTE OR WILD ENCOUNTERS CARD */}
+      {/* CASE 1: ROUTE OR WILD ENCOUNTERS CARD (Land & Marine / Water / Fishing) */}
       {wildEncounters && wildEncounters.length > 0 && (
         <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-2.5 space-y-2">
-          <div className="flex items-center justify-between text-xs font-bold text-emerald-400">
-            <span className="flex items-center gap-1.5">
+          {/* Section Title and Category Filters */}
+          <div className="flex items-center justify-between flex-wrap gap-1.5">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Pokémon Sauvages de la Zone</span>
-            </span>
-            <span className="text-[10px] text-zinc-400 font-normal">Taux d'apparition</span>
+              <span>Potential Pokémon in Area</span>
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-1 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
+              <button
+                id="filter-all-encounters"
+                onClick={() => setSelectedCategory('all')}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors flex items-center gap-1 ${
+                  selectedCategory === 'all'
+                    ? 'bg-emerald-500 text-zinc-950 shadow'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <Layers className="w-2.5 h-2.5" />
+                All ({wildEncounters.length})
+              </button>
+              {hasLand && (
+                <button
+                  id="filter-land-encounters"
+                  onClick={() => setSelectedCategory('walk')}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors flex items-center gap-1 ${
+                    selectedCategory === 'walk'
+                      ? 'bg-emerald-500 text-zinc-950 shadow'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Trees className="w-2.5 h-2.5" />
+                  Land
+                </button>
+              )}
+              {hasSurf && (
+                <button
+                  id="filter-surf-encounters"
+                  onClick={() => setSelectedCategory('surf')}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors flex items-center gap-1 ${
+                    selectedCategory === 'surf'
+                      ? 'bg-cyan-500 text-zinc-950 shadow'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Waves className="w-2.5 h-2.5" />
+                  Surf
+                </button>
+              )}
+              {hasFish && (
+                <button
+                  id="filter-fish-encounters"
+                  onClick={() => setSelectedCategory('fish')}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors flex items-center gap-1 ${
+                    selectedCategory === 'fish'
+                      ? 'bg-blue-500 text-zinc-950 shadow'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Fish className="w-2.5 h-2.5" />
+                  Fish
+                </button>
+              )}
+            </div>
           </div>
 
+          {/* Pokémon Encounter List */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {wildEncounters.map((mon, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between p-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-xs hover:bg-white/[0.06] transition-colors"
-              >
-                <div className="flex items-center gap-2 truncate">
-                  <span className="font-extrabold text-zinc-200 truncate">{mon.name}</span>
-                  <span className="text-[10px] text-zinc-400 font-mono">{mon.levels}</span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <div className="flex gap-1">
-                    {mon.types.map((t) => renderTypeBadge(t))}
+            {filteredEncounters && filteredEncounters.length > 0 ? (
+              filteredEncounters.map((mon, idx) => {
+                const dexId = mon.dexId || NATIONAL_DEX_MAP[mon.name] || 0;
+                const isCaught = ownedSet.has(dexId);
+                const isSeen = seenSet.has(dexId);
+
+                return (
+                  <div
+                    key={`${mon.name}-${mon.methodLabel}-${idx}`}
+                    className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                      isCaught
+                        ? 'bg-emerald-950/20 border-emerald-500/30'
+                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-zinc-500">
+                          #{dexId.toString().padStart(3, '0')}
+                        </span>
+                        <span className="font-extrabold text-xs text-zinc-100 truncate">
+                          {mon.name}
+                        </span>
+
+                        {/* Pokédex Owned / Caught Badge */}
+                        {isCaught ? (
+                          <span
+                            id={`caught-badge-${dexId}`}
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full text-[9px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 tracking-wider"
+                          >
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                            Caught
+                          </span>
+                        ) : isSeen ? (
+                          <span
+                            id={`seen-badge-${dexId}`}
+                            className="inline-flex items-center px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-amber-500/10 text-amber-300/90 border border-amber-500/20 tracking-wider"
+                          >
+                            Seen
+                          </span>
+                        ) : (
+                          <span
+                            id={`uncaught-badge-${dexId}`}
+                            className="inline-flex items-center px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-zinc-800/80 text-zinc-400 border border-white/[0.05] tracking-wider"
+                          >
+                            New!
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-zinc-400">
+                        <span className="font-mono text-zinc-400">{mon.levels}</span>
+                        {mon.methodLabel && (
+                          <span className="text-[9px] text-zinc-400 truncate">
+                            • {mon.methodLabel}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <div className="flex gap-1">
+                        {mon.types.map((t) => renderTypeBadge(t))}
+                      </div>
+                      <span className="text-[10px] font-black font-mono text-zinc-300 bg-white/[0.06] px-1.5 py-0.5 rounded">
+                        {mon.chance}%
+                      </span>
+                    </div>
                   </div>
-                  <span className="text-[10px] font-bold font-mono text-zinc-300 bg-white/[0.06] px-1.5 py-0.5 rounded">
-                    {mon.chance}%
-                  </span>
-                </div>
+                );
+              })
+            ) : (
+              <div className="col-span-2 py-4 text-center text-xs text-zinc-400 italic">
+                No encounters registered in this category.
               </div>
-            ))}
+            )}
           </div>
         </div>
       )}
@@ -335,21 +517,21 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
               </div>
               <div>
                 <div className="text-xs font-black text-amber-300 flex items-center gap-1.5">
-                  <span>Arène Officielle : {gymLeader.leaderName}</span>
+                  <span>Official Gym: {gymLeader.leaderName}</span>
                 </div>
                 <div className="text-[10px] text-zinc-300 font-medium">
-                  {gymLeader.badgeName} • Spécialité : {gymLeader.primaryType}
+                  {gymLeader.badgeName} • Specialty: {gymLeader.primaryType}
                 </div>
               </div>
             </div>
-            {renderTypeBadge(gymLeader.primaryType, `Type ${gymLeader.primaryType}`)}
+            {renderTypeBadge(gymLeader.primaryType, `${gymLeader.primaryType} Type`)}
           </div>
 
           {/* Leader Team */}
           <div className="space-y-1">
             <div className="text-[11px] font-bold text-zinc-300 flex items-center gap-1">
               <Zap className="w-3 h-3 text-amber-400" />
-              <span>Équipe de l'Arène :</span>
+              <span>Gym Roster:</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {gymLeader.team.map((m, i) => (
@@ -358,7 +540,7 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
                   className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-semibold"
                 >
                   <span className="text-zinc-100">{m.name}</span>
-                  <span className="text-[10px] font-mono text-amber-300">Niv. {m.level}</span>
+                  <span className="text-[10px] font-mono text-amber-300">Lv. {m.level}</span>
                   <div className="flex gap-0.5 ml-0.5">
                     {m.types.map((t) => renderTypeBadge(t))}
                   </div>
@@ -371,7 +553,7 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
           <div className="space-y-1">
             <div className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
               <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-              <span>Types recommandés (Faiblesses clés) :</span>
+              <span>Recommended Types (Key Weaknesses):</span>
             </div>
             <div className="flex items-center gap-1 flex-wrap pl-4">
               {gymLeader.weaknesses.map((w) => renderTypeBadge(w))}
@@ -396,3 +578,4 @@ export function GameGuidePanel({ emulator }: GameGuidePanelProps) {
     </div>
   );
 }
+

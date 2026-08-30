@@ -1,5 +1,5 @@
-// Real-Time RAM Guide Reader for Pokémon Yellow / Gen 1
-import { resolveAddr, POKEMON_YELLOW_RAM, getRamOffset } from './pokemonYellowRam';
+// Real-Time RAM Guide Reader for Pokémon Yellow / Gen 1 (English Version)
+import { resolveAddr, POKEMON_YELLOW_RAM, readPokedexFromRAM, PokedexStatusData } from './pokemonYellowRam';
 import {
   GEN1_INTERNAL_POKEMON,
   RAM_TYPE_MAP,
@@ -49,6 +49,7 @@ export interface GameGuideSnapshot {
   mode: 'battle' | 'overworld';
   battleData?: BattleGuideData;
   overworldData?: OverworldGuideData;
+  pokedexData?: PokedexStatusData;
 }
 
 export class GameGuideReader {
@@ -62,11 +63,11 @@ export class GameGuideReader {
    */
   private static decodeStatusByte(statusByte: number): string {
     if (statusByte === 0) return 'Normal';
-    if ((statusByte & 0x07) > 0) return 'Sommeil 💤';
+    if ((statusByte & 0x07) > 0) return 'Sleep 💤';
     if ((statusByte & 0x08) > 0) return 'Poison 🟣';
-    if ((statusByte & 0x10) > 0) return 'Brûlure 🔥';
-    if ((statusByte & 0x20) > 0) return 'Gel ❄️';
-    if ((statusByte & 0x40) > 0) return 'Paralysie ⚡';
+    if ((statusByte & 0x10) > 0) return 'Burn 🔥';
+    if ((statusByte & 0x20) > 0) return 'Freeze ❄️';
+    if ((statusByte & 0x40) > 0) return 'Paralyze ⚡';
     return 'Normal';
   }
 
@@ -74,34 +75,178 @@ export class GameGuideReader {
    * Categorizes a Gen 1 Map ID into 'city', 'route', 'dungeon', 'pokecenter', or 'indoor'.
    */
   public static categorizeMap(mapId: number, mapName: string): 'route' | 'city' | 'dungeon' | 'pokecenter' | 'indoor' {
-    if (mapName.includes('Centre PKMN')) return 'pokecenter';
-    if (mapName.startsWith('Route') || mapName.includes('Chenal')) return 'route';
+    const nameLower = mapName.toLowerCase();
+    if (nameLower.includes('centre') || nameLower.includes('center') || nameLower.includes('pkmn')) return 'pokecenter';
+    if (nameLower.startsWith('route') || nameLower.includes('water path') || nameLower.includes('channel') || nameLower.includes('chenal')) return 'route';
     if (
-      mapName.includes('Forêt') ||
-      mapName.includes('Mont Sélénite') ||
-      mapName.includes('Grotte') ||
-      mapName.includes('Cave') ||
-      mapName.includes('Îles') ||
-      mapName.includes('Centrale')
+      nameLower.includes('forest') ||
+      nameLower.includes('forêt') ||
+      nameLower.includes('moon') ||
+      nameLower.includes('sélénite') ||
+      nameLower.includes('cave') ||
+      nameLower.includes('grotte') ||
+      nameLower.includes('tunnel') ||
+      nameLower.includes('island') ||
+      nameLower.includes('plant') ||
+      nameLower.includes('tower') ||
+      nameLower.includes('mansion')
     ) {
       return 'dungeon';
     }
     if (
-      mapId === 0x00 || // Bourg Palette
-      mapId === 0x01 || // Jadielle
-      mapId === 0x02 || // Argenta
-      mapId === 0x03 || // Azuria
-      mapId === 0x04 || // Lavanville
-      mapId === 0x05 || // Carmin
-      mapId === 0x06 || // Céladopole
-      mapId === 0x07 || // Parmanie
-      mapId === 0x08 || // Cramois'Île
-      mapId === 0x09 || // Plateau Indigo
-      mapId === 0x0A    // Safrania
+      mapId === 0x00 || // Pallet Town
+      mapId === 0x01 || // Viridian City
+      mapId === 0x02 || // Pewter City
+      mapId === 0x03 || // Cerulean City
+      mapId === 0x04 || // Lavender Town
+      mapId === 0x05 || // Vermilion City
+      mapId === 0x06 || // Celadon City
+      mapId === 0x07 || // Fuchsia City
+      mapId === 0x08 || // Cinnabar Island
+      mapId === 0x09 || // Indigo Plateau
+      mapId === 0x0A    // Saffron City
     ) {
       return 'city';
     }
     return 'indoor';
+  }
+
+  /**
+   * Reads the active Enemy Pokémon in battle with dynamic offset detection.
+   */
+  private static readEnemyMon(mmu: any): BattlingMonState | null {
+    const candidateOffsets = [0, -1, 1, -2, 2, -3, 3, -4, 4];
+    
+    // 1. Scan for the full wEnemyMon battle structure around 0xCFE8
+    for (const offset of candidateOffsets) {
+      const base = 0xCFE8 + offset;
+      const speciesId = mmu.read(base);
+      const enemyInfo = GEN1_INTERNAL_POKEMON[speciesId];
+      if (!enemyInfo) continue;
+
+      const level = mmu.read(base + 14);
+      const maxHp = (mmu.read(base + 15) << 8) | mmu.read(base + 16);
+      const curHp = (mmu.read(base + 1) << 8) | mmu.read(base + 2);
+      const rawType1 = mmu.read(base + 5);
+      const rawType2 = mmu.read(base + 6);
+      const statusByte = mmu.read(base + 4);
+
+      // Verify that this is a plausible battle structure
+      if (level >= 1 && level <= 100 && maxHp >= 1 && maxHp <= 1500 && curHp <= maxHp + 10) {
+        const type1: PokemonType = RAM_TYPE_MAP[rawType1] || enemyInfo.type1;
+        const type2: PokemonType | undefined =
+          rawType1 !== rawType2 && RAM_TYPE_MAP[rawType2] ? RAM_TYPE_MAP[rawType2] : enemyInfo.type2;
+        const matchupReport = getDefenderMatchupReport(type1, type2);
+
+        return {
+          speciesId,
+          name: enemyInfo.name,
+          level,
+          curHp: Math.min(curHp, maxHp),
+          maxHp,
+          hpPercent: Math.min(100, Math.max(0, Math.round((curHp / maxHp) * 100))),
+          type1,
+          type2,
+          statusStr: this.decodeStatusByte(statusByte),
+          matchupReport,
+        };
+      }
+    }
+
+    // 2. Fallback: Check auxiliary opponent species RAM locations (e.g. wEnemyMonSpecies2 / wCurOpponent)
+    const fallbackAddrs = [0xCFD8, 0xCFD7, 0xCFD9, 0xCFE8, 0xCFE7, 0xD059, 0xD058];
+    for (const addr of fallbackAddrs) {
+      const speciesId = mmu.read(addr);
+      const enemyInfo = GEN1_INTERNAL_POKEMON[speciesId];
+      if (enemyInfo) {
+        const type1 = enemyInfo.type1;
+        const type2 = enemyInfo.type2;
+        const matchupReport = getDefenderMatchupReport(type1, type2);
+
+        return {
+          speciesId,
+          name: enemyInfo.name,
+          level: 5,
+          curHp: 20,
+          maxHp: 20,
+          hpPercent: 100,
+          type1,
+          type2,
+          statusStr: 'Normal',
+          matchupReport,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Reads the active Player Pokémon in battle with dynamic offset detection.
+   */
+  private static readPlayerMon(mmu: any): BattlingMonState | null {
+    const candidateOffsets = [0, -1, 1, -2, 2, -3, 3];
+    
+    // 1. Scan for the full wBattleMon structure around 0xD014
+    for (const offset of candidateOffsets) {
+      const base = 0xD014 + offset;
+      const speciesId = mmu.read(base);
+      const playerInfo = GEN1_INTERNAL_POKEMON[speciesId];
+      if (!playerInfo) continue;
+
+      const level = mmu.read(base + 14);
+      const maxHp = (mmu.read(base + 15) << 8) | mmu.read(base + 16);
+      const curHp = (mmu.read(base + 1) << 8) | mmu.read(base + 2);
+      const rawType1 = mmu.read(base + 5);
+      const rawType2 = mmu.read(base + 6);
+      const statusByte = mmu.read(base + 4);
+
+      if (level >= 1 && level <= 100 && maxHp >= 1 && maxHp <= 1500) {
+        const type1: PokemonType = RAM_TYPE_MAP[rawType1] || playerInfo.type1;
+        const type2: PokemonType | undefined =
+          rawType1 !== rawType2 && RAM_TYPE_MAP[rawType2] ? RAM_TYPE_MAP[rawType2] : playerInfo.type2;
+        const matchupReport = getDefenderMatchupReport(type1, type2);
+
+        return {
+          speciesId,
+          name: playerInfo.name,
+          level,
+          curHp: Math.min(curHp, maxHp),
+          maxHp,
+          hpPercent: Math.min(100, Math.max(0, Math.round((curHp / maxHp) * 100))),
+          type1,
+          type2,
+          statusStr: this.decodeStatusByte(statusByte),
+          matchupReport,
+        };
+      }
+    }
+
+    // 2. Fallback to Party Mon 1
+    const p1Base = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_BASE_EN, mmu);
+    const p1Species = mmu.read(p1Base);
+    const playerInfo = GEN1_INTERNAL_POKEMON[p1Species];
+    if (playerInfo) {
+      const curHp = (mmu.read(p1Base + 1) << 8) | mmu.read(p1Base + 2);
+      const maxHp = (mmu.read(p1Base + 34) << 8) | mmu.read(p1Base + 35) || 20;
+      const level = mmu.read(p1Base + 33) || 5;
+      const matchupReport = getDefenderMatchupReport(playerInfo.type1, playerInfo.type2);
+
+      return {
+        speciesId: p1Species,
+        name: playerInfo.name,
+        level,
+        curHp: Math.min(curHp, maxHp),
+        maxHp,
+        hpPercent: Math.min(100, Math.max(0, Math.round((curHp / maxHp) * 100))),
+        type1: playerInfo.type1,
+        type2: playerInfo.type2,
+        statusStr: 'Normal',
+        matchupReport,
+      };
+    }
+
+    return null;
   }
 
   /**
@@ -113,116 +258,72 @@ export class GameGuideReader {
     }
 
     try {
-      const battleTypeAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN, mmu);
-      const battleTypeRaw = mmu.read(battleTypeAddr);
-      const isBattle = battleTypeRaw > 0;
+      // wIsInBattle in Gen 1:
+      // 0 = Overworld (No battle)
+      // 1 = Wild Pokémon battle
+      // 2 = Trainer battle
+      // (Any other value or 0 means Overworld)
+      const battleAddr = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_TYPE_EN, mmu);
+      const battleVal = mmu.read(battleAddr);
+      
+      let battleTypeRaw = 0;
+      if (battleVal === 1 || battleVal === 2) {
+        battleTypeRaw = battleVal;
+      } else {
+        // Test Red/Blue (0xD057) or French Yellow (0xD055) strictly for 1 or 2
+        const yellowFrVal = mmu.read(0xD055);
+        const redBlueVal = mmu.read(0xD057);
+        if (yellowFrVal === 1 || yellowFrVal === 2) {
+          battleTypeRaw = yellowFrVal;
+        } else if (redBlueVal === 1 || redBlueVal === 2) {
+          battleTypeRaw = redBlueVal;
+        }
+      }
+
+      let isBattle = battleTypeRaw === 1 || battleTypeRaw === 2;
+
+      // Verify that if in battle, we can read a valid enemy Pokémon
+      let enemyMonState: BattlingMonState | null = null;
+      let playerMonState: BattlingMonState | null = null;
+
+      if (isBattle) {
+        enemyMonState = this.readEnemyMon(mmu);
+        playerMonState = this.readPlayerMon(mmu);
+
+        // If no enemy mon can be found at all, treat as overworld to avoid stuck battle UI
+        if (!enemyMonState) {
+          isBattle = false;
+        }
+      }
 
       if (isBattle) {
         // ==========================================
-        // 1. COMBAT ACTIF (BATTLE MODE)
+        // 1. ACTIVE BATTLE MODE
         // ==========================================
-        const offset = getRamOffset(mmu);
-
-        // ENEMY POKÉMON RAM ADDRESSES:
-        // Species: 0xCFE5 (EN) -> resolveAddr(0xCFE5)
-        const enemySpeciesAddr = resolveAddr(0xCFE5, mmu);
-        const enemyHpBase = resolveAddr(0xCFE6, mmu);
-        const enemyStatusAddr = resolveAddr(0xCFE9, mmu);
-        const enemyType1Addr = resolveAddr(0xCFEA, mmu);
-        const enemyType2Addr = resolveAddr(0xCFEB, mmu);
-        const enemyLevelAddr = resolveAddr(0xCFF3, mmu);
-        const enemyMaxHpBase = resolveAddr(0xCFF4, mmu);
-
-        const enemySpeciesId = mmu.read(enemySpeciesAddr);
-        const enemyCurHp = (mmu.read(enemyHpBase) << 8) | mmu.read(enemyHpBase + 1);
-        const enemyMaxHp = Math.max(1, (mmu.read(enemyMaxHpBase) << 8) | mmu.read(enemyMaxHpBase + 1));
-        const enemyLevel = mmu.read(enemyLevelAddr);
-        const enemyStatus = this.decodeStatusByte(mmu.read(enemyStatusAddr));
-
-        const enemyInfo = GEN1_INTERNAL_POKEMON[enemySpeciesId];
-        const rawEnemyType1 = mmu.read(enemyType1Addr);
-        const rawEnemyType2 = mmu.read(enemyType2Addr);
-
-        const enemyType1: PokemonType = RAM_TYPE_MAP[rawEnemyType1] || enemyInfo?.type1 || 'Normal';
-        const enemyType2: PokemonType | undefined =
-          rawEnemyType1 !== rawEnemyType2 && RAM_TYPE_MAP[rawEnemyType2]
-            ? RAM_TYPE_MAP[rawEnemyType2]
-            : enemyInfo?.type2;
-
-        const enemyMatchup = getDefenderMatchupReport(enemyType1, enemyType2);
-
-        const enemyMonState: BattlingMonState = {
-          speciesId: enemySpeciesId,
-          name: enemyInfo ? enemyInfo.name : `Pokémon #${enemySpeciesId}`,
-          level: enemyLevel > 0 && enemyLevel <= 100 ? enemyLevel : 5,
-          curHp: Math.min(enemyCurHp, enemyMaxHp),
-          maxHp: enemyMaxHp,
-          hpPercent: Math.min(100, Math.max(0, Math.round((enemyCurHp / enemyMaxHp) * 100))),
-          type1: enemyType1,
-          type2: enemyType2,
-          statusStr: enemyStatus,
-          matchupReport: enemyMatchup,
-        };
-
-        // PLAYER POKÉMON RAM ADDRESSES:
-        const playerHpBase = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_MON_HP_EN, mmu);
-        const playerMaxHpBase = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_MON_MAX_HP_EN, mmu);
-        const playerType1Addr = resolveAddr(0xD019, mmu);
-        const playerType2Addr = resolveAddr(0xD01A, mmu);
-        const playerLevelAddr = resolveAddr(0xD022, mmu);
-
-        // Active mon species from party slot 1 or battle
-        const partyMon1SpeciesAddr = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_BASE_EN, mmu);
-        const playerSpeciesId = mmu.read(resolveAddr(0xD014, mmu)) || mmu.read(partyMon1SpeciesAddr);
-        const playerCurHp = (mmu.read(playerHpBase) << 8) | mmu.read(playerHpBase + 1);
-        const playerMaxHp = Math.max(1, (mmu.read(playerMaxHpBase) << 8) | mmu.read(playerMaxHpBase + 1));
-        const playerLevel = mmu.read(playerLevelAddr);
-
-        const playerInfo = GEN1_INTERNAL_POKEMON[playerSpeciesId];
-        const rawPlayerType1 = mmu.read(playerType1Addr);
-        const rawPlayerType2 = mmu.read(playerType2Addr);
-
-        const playerType1: PokemonType = RAM_TYPE_MAP[rawPlayerType1] || playerInfo?.type1 || 'Normal';
-        const playerType2: PokemonType | undefined =
-          rawPlayerType1 !== rawPlayerType2 && RAM_TYPE_MAP[rawPlayerType2]
-            ? RAM_TYPE_MAP[rawPlayerType2]
-            : playerInfo?.type2;
-
-        const playerMatchup = getDefenderMatchupReport(playerType1, playerType2);
-
-        const playerMonState: BattlingMonState = {
-          speciesId: playerSpeciesId,
-          name: playerInfo ? playerInfo.name : 'Mon Pokémon',
-          level: playerLevel > 0 && playerLevel <= 100 ? playerLevel : 5,
-          curHp: Math.min(playerCurHp, playerMaxHp),
-          maxHp: playerMaxHp,
-          hpPercent: Math.min(100, Math.max(0, Math.round((playerCurHp / playerMaxHp) * 100))),
-          type1: playerType1,
-          type2: playerType2,
-          statusStr: 'Normal',
-          matchupReport: playerMatchup,
-        };
-
-        // Tactical Advice formulation:
         const tacticalAdvice: string[] = [];
-        if (enemyMatchup.weaknesses.length > 0) {
-          const x4Weaknesses = enemyMatchup.weaknesses.filter((w) => w.multiplier >= 4);
-          if (x4Weaknesses.length > 0) {
+        if (enemyMonState) {
+          const { matchupReport } = enemyMonState;
+          if (matchupReport.weaknesses.length > 0) {
+            const x4Weaknesses = matchupReport.weaknesses.filter((w) => w.multiplier >= 4);
+            if (x4Weaknesses.length > 0) {
+              tacticalAdvice.push(
+                `⚡ Double weakness (4x): ${x4Weaknesses.map((w) => w.type).join(', ')}!`
+              );
+            } else {
+              tacticalAdvice.push(
+                `💥 Key weaknesses (2x): ${matchupReport.weaknesses.slice(0, 3).map((w) => w.type).join(', ')}.`
+              );
+            }
+          }
+
+          if (matchupReport.immunities.length > 0) {
             tacticalAdvice.push(
-              `⚡ Double faiblesse (x4) : ${x4Weaknesses.map((w) => w.type).join(', ')} !`
-            );
-          } else {
-            tacticalAdvice.push(
-              `💥 Faiblesses (x2) : ${enemyMatchup.weaknesses.slice(0, 3).map((w) => w.type).join(', ')}.`
+              `🚫 Total immunity (0x): Ineffective with ${matchupReport.immunities.join(', ')} type.`
             );
           }
         }
 
-        if (enemyMatchup.immunities.length > 0) {
-          tacticalAdvice.push(
-            `🚫 Immunité totale (0x) : Inefficace avec le type ${enemyMatchup.immunities.join(', ')}.`
-          );
-        }
+        const pokedexData = readPokedexFromRAM(mmu);
 
         return {
           mode: 'battle',
@@ -233,10 +334,11 @@ export class GameGuideReader {
             enemyMon: enemyMonState,
             tacticalAdvice,
           },
+          pokedexData,
         };
       } else {
         // ==========================================
-        // 2. OVERWORLD EXPLORATION (OVERWORLD MODE)
+        // 2. OVERWORLD EXPLORATION MODE
         // ==========================================
         const mapIdAddr = resolveAddr(POKEMON_YELLOW_RAM.MAP_ID_EN, mmu);
         const mapId = mmu.read(mapIdAddr);
@@ -246,7 +348,8 @@ export class GameGuideReader {
         const playerX = mmu.read(playerXAddr);
         const playerY = mmu.read(playerYAddr);
 
-        const mapName = POKEMON_YELLOW_MAPS[mapId] || `Zone Kanto (ID: 0x${mapId.toString(16).toUpperCase().padStart(2, '0')})`;
+        const rawMapName = POKEMON_YELLOW_MAPS[mapId];
+        const mapName = rawMapName || `Kanto Area (ID: 0x${mapId.toString(16).toUpperCase().padStart(2, '0')})`;
         const category = this.categorizeMap(mapId, mapName);
 
         const wildEncounters = WILD_ENCOUNTERS_BY_MAP[mapId] || undefined;
@@ -254,11 +357,14 @@ export class GameGuideReader {
 
         let description = '';
         if (category === 'pokecenter') {
-          description = 'Infirmière Joëlle disponible pour soigner gratuitement toute votre équipe.';
+          description = 'Pokécenter — Speak to Nurse Joy at the counter to fully heal your entire team for free.';
         } else if (category === 'city' && !gymLeader) {
-          if (mapId === 0x00) description = 'Ville de départ. Laboratoire du Professeur Chen et maison de votre rival.';
-          if (mapId === 0x04) description = 'Ville mystique abritant la Tour Pokémon et la Maison des Bénévoles de M. Fuji.';
+          if (mapId === 0x00) description = 'Starting Town. Home to Professor Oak\'s Research Lab and your Rival\'s house.';
+          if (mapId === 0x04) description = 'Mystic Town home to the Pokémon Tower and Mr. Fuji\'s Volunteer House.';
+          if (mapId === 0x09) description = 'Indigo Plateau — Headquarters of the Pokémon League and the Elite Four.';
         }
+
+        const pokedexData = readPokedexFromRAM(mmu);
 
         return {
           mode: 'overworld',
@@ -272,10 +378,11 @@ export class GameGuideReader {
             gymLeader,
             description,
           },
+          pokedexData,
         };
       }
     } catch (err) {
-      console.warn('Erreur lecture Guide RAM:', err);
+      console.warn('Guide RAM read error:', err);
       return null;
     }
   }
