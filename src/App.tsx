@@ -6,6 +6,7 @@ import { useGamepad } from './services/gamepad';
 import { getThemeConfig } from './utils/theme';
 
 import { GbcDisplay } from './components/GbcDisplay';
+import { MobileStatusBar } from './components/MobileStatusBar';
 import { TouchOverlay } from './components/TouchOverlay';
 import { ControlBar } from './components/ControlBar';
 import { SaveStateModal } from './components/SaveStateModal';
@@ -16,9 +17,8 @@ import { CastModal } from './components/CastModal';
 import { TvReceiver } from './components/TvReceiver';
 import { CastService } from './services/cast';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { SimpleTrainerBot, BotLogEntry, TrainerBotState, TrainerBotMode, BOT_MODES } from './services/simpleTrainerBot';
+import { SimpleTrainerBot, TrainerBotState, TrainerBotMode, BOT_MODES } from './services/simpleTrainerBot';
 import { LocalNavigationEngine, AutoHealProgress } from './services/localNavigation';
-import { BotLogModal } from './components/BotLogModal';
 
 export default function App() {
   // Check if running as Dedicated TV Screen Receiver
@@ -32,7 +32,7 @@ export default function App() {
   const [currentRom, setCurrentRom] = useState<RomItem | null>(null);
   const [savedRoms, setSavedRoms] = useState<RomItem[]>([]);
 
-  // Simple Trainer Bot state & Live Decision Logs
+  // Simple Trainer Bot state
   const trainerBotRef = useRef<SimpleTrainerBot>(new SimpleTrainerBot());
   const [isBotRunning, setIsBotRunning] = useState<boolean>(false);
   const [botState, setBotState] = useState<TrainerBotState>('idle');
@@ -57,22 +57,12 @@ export default function App() {
     }
     return 50;
   });
-  const [botLogs, setBotLogs] = useState<BotLogEntry[]>([]);
-  const [showBotLogModal, setShowBotLogModal] = useState<boolean>(false);
-  const showBotLogModalRef = useRef<boolean>(false);
-  showBotLogModalRef.current = showBotLogModal;
 
   // Auto-Heal Bot Engine (LocalNavigationEngine / Module 2)
   const navEngineRef = useRef<LocalNavigationEngine>(new LocalNavigationEngine());
   const autoHealFromTrainerBotRef = useRef<boolean>(false);
   const [isHealRunning, setIsHealRunning] = useState<boolean>(false);
   const [healProgress, setHealProgress] = useState<AutoHealProgress | null>(null);
-  const [healStartTime, setHealStartTime] = useState<number | null>(null);
-
-  const handleOpenBotLogs = useCallback(() => {
-    setBotLogs(trainerBotRef.current.getLogs());
-    setShowBotLogModal(true);
-  }, []);
 
   // Settings & App State
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -144,19 +134,12 @@ export default function App() {
     trainerBotRef.current.onModeChange = (mode) => {
       setBotMode(mode);
     };
-    trainerBotRef.current.onLogsUpdate = (logs) => {
-      if (showBotLogModalRef.current) {
-        setBotLogs(logs);
-      }
-    };
     trainerBotRef.current.onAutoHealRequest = async () => {
       autoHealFromTrainerBotRef.current = true;
       setIsHealRunning(true);
-      setHealStartTime(Date.now());
       showToast('🩺 Bot Soin activé par le Bot Entraînement ! Direction Centre Pokémon...');
       const success = await navEngineRef.current.executeAutoHealSequence(true);
       setIsHealRunning(false);
-      setHealStartTime(null);
       if (success) {
         showToast('✨ Équipe soignée et retour au point de départ ! Reprise du Bot Entraînement.');
         setTimeout(() => {
@@ -174,7 +157,6 @@ export default function App() {
       setHealProgress(progress);
       if (progress.status === 'completed' || progress.status === 'error' || progress.status === 'idle') {
         setIsHealRunning(false);
-        setHealStartTime(null);
 
         if (progress.status === 'completed' && autoHealFromTrainerBotRef.current) {
           autoHealFromTrainerBotRef.current = false;
@@ -490,7 +472,6 @@ export default function App() {
     const willStart = !isBotRunning;
     trainerBotRef.current.toggle();
     if (willStart) {
-      setShowBotLogModal(false);
       setShowSettings(false);
       const modeInfo = BOT_MODES.find((m) => m.id === botMode);
       showToast(`🟢 Bot activé ! Mode : ${modeInfo?.name || botMode}`);
@@ -505,11 +486,9 @@ export default function App() {
     if (isHealRunning) {
       navEngineRef.current.stop();
       setIsHealRunning(false);
-      setHealStartTime(null);
       showToast('⏹️ Bot Soin arrêté');
     } else {
       setIsHealRunning(true);
-      setHealStartTime(Date.now());
       showToast('🩺 Bot Soin activé : Direction Centre Pokémon !');
       await navEngineRef.current.executeAutoHealSequence(true);
     }
@@ -602,7 +581,6 @@ export default function App() {
         onTargetLevelChange={handleTargetLevelChange}
         onBotModeChange={handleBotModeChange}
         onToggleBot={handleToggleBot}
-        onOpenBotLogs={handleOpenBotLogs}
         isHealRunning={isHealRunning}
         healProgress={healProgress}
         onToggleAutoHeal={handleToggleAutoHeal}
@@ -621,21 +599,16 @@ export default function App() {
         onScreenshot={handleScreenshot}
       />
 
-      {/* Main Full-Screen Game Display Viewport - Aligned to top under ControlBar */}
-      <main className="flex-1 w-full relative flex flex-col items-center justify-start bg-black overflow-hidden select-none p-0 m-0">
+      {/* Mobile Top Status Bar (Visible in portrait mode on mobile devices: Time & Battery) */}
+      <MobileStatusBar />
+
+      {/* Main Full-Screen Game Display Viewport - Just below status bar */}
+      <main className="flex-1 w-full relative flex flex-col items-center justify-center bg-black overflow-hidden select-none p-0 m-0">
         <GbcDisplay
           emulator={emulator}
           filter={settings.videoFilter}
           speed={speed}
           notification={notification}
-          isBotRunning={isBotRunning}
-          botStartTime={trainerBotRef.current.getStartTime()}
-          botMode={botMode}
-          navEngine={navEngineRef.current}
-          isHealRunning={isHealRunning}
-          healStartTime={healStartTime}
-          healProgress={healProgress}
-          onToggleAutoHeal={handleToggleAutoHeal}
           onOpenRomLibrary={() => setShowRomLibrary(true)}
         />
       </main>
@@ -746,21 +719,6 @@ export default function App() {
           onClose={() => setShowCastModal(false)}
           gameTitle={currentRom?.title || 'Game Boy Color'}
           onStartTvWindow={handleStartTvWindowDirect}
-        />
-      </ErrorBoundary>
-
-      {/* Pokemon Yellow Trainer Bot Decisions & Actions Live Log Modal */}
-      <ErrorBoundary fallbackTitle="Erreur dans le journal du bot">
-        <BotLogModal
-          isOpen={showBotLogModal}
-          onClose={() => setShowBotLogModal(false)}
-          logs={botLogs}
-          isRunning={isBotRunning}
-          botState={botState}
-          botMode={botMode}
-          onBotModeChange={handleBotModeChange}
-          onToggleBot={handleToggleBot}
-          onClearLogs={() => trainerBotRef.current.clearLogs()}
         />
       </ErrorBoundary>
     </div>

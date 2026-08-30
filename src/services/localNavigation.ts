@@ -208,14 +208,14 @@ export class LocalNavigationEngine {
 
       // Step 2: Macro Planning (Zone graph BFS)
       this.currentStatus = 'macro_planning';
-      const macroPlan = planMacroRoute(nav.currentMapId);
+      const macroPlan = planMacroRoute(nav.currentMapId, nav.playerX, nav.playerY);
       if (!macroPlan) {
         this.currentStatus = 'error';
         this.addLog('error', '❌ Aucun itinéraire Macro trouvé vers un Centre Pokémon.');
         return false;
       }
 
-      const pokecenter = getClosestPokecenterForMap(nav.currentMapId);
+      const pokecenter = getClosestPokecenterForMap(nav.currentMapId, nav.playerX, nav.playerY);
       this.addLog('info', `🎯 Cible Macro : ${pokecenter.name} (${macroPlan.boundaries.length} frontière(s) à traverser)`);
 
       // Step 3: Traverse each Macro boundary using Micro RAM A*

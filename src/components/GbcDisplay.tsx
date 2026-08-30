@@ -1,10 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { GameBoy } from '../emulator/gameboy';
 import { VideoFilter } from '../emulator/types';
 import { Play, Pause } from 'lucide-react';
-import { RamViewer } from './RamViewer';
-import { TrainerBotMode } from '../services/simpleTrainerBot';
-import { LocalNavigationEngine, AutoHealProgress } from '../services/localNavigation';
+import { GameGuidePanel } from './GameGuidePanel';
 
 interface GbcDisplayProps {
   emulator: GameBoy | null;
@@ -13,28 +11,12 @@ interface GbcDisplayProps {
   notification: string | null;
   onScreenCapture?: (dataUrl: string) => void;
   onOpenRomLibrary?: () => void;
-  isBotRunning?: boolean;
-  botStartTime?: number | null;
-  botMode?: TrainerBotMode;
-  navEngine?: LocalNavigationEngine;
-  isHealRunning?: boolean;
-  healStartTime?: number | null;
-  healProgress?: AutoHealProgress | null;
-  onToggleAutoHeal?: () => void;
 }
 
 export const GbcDisplay = React.memo(function GbcDisplay({
   emulator,
   filter,
   notification,
-  isBotRunning,
-  botStartTime,
-  botMode,
-  navEngine,
-  isHealRunning,
-  healStartTime,
-  healProgress,
-  onToggleAutoHeal,
   onScreenCapture,
   onOpenRomLibrary
 }: GbcDisplayProps) {
@@ -68,38 +50,16 @@ export const GbcDisplay = React.memo(function GbcDisplay({
   useEffect(() => {
     if (onScreenCapture && canvasRef.current) {
       // Expose screenshot capture capability
-      const handleCapture = () => {
-        if (canvasRef.current) {
-          onScreenCapture(canvasRef.current.toDataURL('image/png'));
-        }
-      };
       (window as unknown as { __gbcCaptureScreenshot?: () => string }).__gbcCaptureScreenshot = () => {
         return canvasRef.current ? canvasRef.current.toDataURL('image/png') : '';
       };
     }
   }, [onScreenCapture]);
 
-  const getFilterStyle = (): string => {
-    switch (filter) {
-      case 'dmg-green':
-        return 'filter sepia(100%) hue-rotate(50deg) saturate(220%) contrast(110%)';
-      case 'gbc-color':
-        return 'filter saturate(135%) contrast(108%) brightness(102%)';
-      case 'crt-scanlines':
-        return 'filter contrast(115%) brightness(95%)';
-      case 'smooth':
-        return 'image-rendering-auto';
-      case 'clean':
-      case 'lcd-grid':
-      default:
-        return 'image-rendering-pixelated';
-    }
-  };
-
   return (
-    <div className="relative w-full h-full flex-1 flex flex-col landscape:justify-center portrait:justify-start items-center bg-black overflow-hidden select-none">
-      {/* 160x144 Native Aspect Ratio Frame (10:9) Auto scaled to fit perfectly in landscape and portrait */}
-      <div className="relative aspect-[10/9] w-full portrait:max-w-[480px] landscape:max-h-screen landscape:w-auto flex items-center justify-center bg-black overflow-hidden shadow-[0_15px_35px_rgba(0,0,0,0.8)] border-b landscape:border-b-0 border-white/[0.05]">
+    <div className="relative w-full h-full flex-1 flex flex-col items-center justify-start bg-black overflow-y-auto overflow-x-hidden select-none p-0 sm:p-4 custom-scrollbar">
+      {/* 160x144 Native Aspect Ratio Frame (10:9) scaled to fit comfortably directly below the top bar */}
+      <div className="relative aspect-[10/9] w-full max-w-[540px] shrink-0 flex items-center justify-center bg-black overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.9)] rounded-none sm:rounded-2xl border-b sm:border border-white/[0.06]">
         {/* Main GBC Framebuffer Canvas */}
         <canvas
           ref={canvasRef}
@@ -178,19 +138,13 @@ export const GbcDisplay = React.memo(function GbcDisplay({
           </div>
         )}
       </div>
-      
-      {/* Real-Time RAM Inspector for the gap */}
-      <RamViewer 
-        emulator={emulator} 
-        isBotRunning={isBotRunning} 
-        botStartTime={botStartTime} 
-        botMode={botMode}
-        navEngine={navEngine}
-        isHealRunning={isHealRunning}
-        healStartTime={healStartTime}
-        healProgress={healProgress}
-        onToggleAutoHeal={onToggleAutoHeal}
-      />
+
+      {/* Dynamic Contextual Game Guide below the screen */}
+      {emulator?.cart && (
+        <div className="w-full flex justify-center px-2 py-2 pb-24 sm:pb-4 pointer-events-auto">
+          <GameGuidePanel emulator={emulator} />
+        </div>
+      )}
     </div>
   );
 });

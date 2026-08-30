@@ -185,6 +185,7 @@ export const POKECENTERS: PokecenterLocation[] = [
 ];
 
 // World Topological Map Graph (Adjacent map connections for routing)
+// Models one-way barriers (e.g. Route 4 East -> Cerulean City, Route 24 -> Cerulean, etc.)
 const MAP_ADJACENCY: Record<number, number[]> = {
   0x00: [0x0C, 0x22], // Bourg Palette -> Route 1, Route 21
   0x0C: [0x00, 0x01], // Route 1 -> Bourg Palette, Jadielle
@@ -194,8 +195,8 @@ const MAP_ADJACENCY: Record<number, number[]> = {
   0x33: [0x0D], // Forêt de Jade -> Route 2
   0x02: [0x0D, 0x0E, 0x3A], // Argenta -> Route 2, Route 3, Pokécenter
   0x3A: [0x02], // Pokécenter Argenta -> Argenta
-  0x0E: [0x02, 0x0F, 0x3B], // Route 3 -> Argenta, Route 4, Mt Sélénite
-  0x0F: [0x0E, 0x03, 0x54], // Route 4 -> Route 3, Azuria, Pokécenter Mt Moon
+  0x0E: [0x02, 0x0F, 0x3B], // Route 3 -> Argenta, Route 4 Ouest, Mt Sélénite
+  0x0F: [0x03, 0x0E, 0x54], // Route 4 -> Azuria (East), Route 3 (West), Pokécenter Mt Moon
   0x54: [0x0F], // Pokécenter Mt Moon -> Route 4
   0x03: [0x0F, 0x10, 0x14, 0x24, 0x44], // Azuria -> Route 4, Route 5, Route 9, Route 24, Pokécenter
   0x44: [0x03], // Pokécenter Azuria -> Azuria
@@ -238,15 +239,24 @@ const MAP_ADJACENCY: Record<number, number[]> = {
 };
 
 // BFS Pathfinding on Map Topology Graph
-export function findShortestMapPath(startMapId: number, goalMapId: number): number[] | null {
+export function findShortestMapPath(startMapId: number, goalMapId: number, playerX?: number): number[] | null {
   if (startMapId === goalMapId) return [startMapId];
+
+  // Specific one-way override: If starting on Route 4 East (X >= 24), you CANNOT walk to Route 3 (0x0E) or Mt Moon (0x3B)
+  const isRoute4East = startMapId === 0x0F && (playerX === undefined || playerX >= 24);
 
   const queue: { mapId: number; path: number[] }[] = [{ mapId: startMapId, path: [startMapId] }];
   const visited = new Set<number>([startMapId]);
 
   while (queue.length > 0) {
     const current = queue.shift()!;
-    const neighbors = MAP_ADJACENCY[current.mapId] || [];
+    let neighbors = MAP_ADJACENCY[current.mapId] || [];
+
+    // Filter out forbidden edges on split maps
+    if (current.mapId === 0x0F && isRoute4East) {
+      // From Route 4 East, you can ONLY head East to Cerulean (0x03), NOT to Route 3 (0x0E) or Mt Moon (0x54)
+      neighbors = neighbors.filter(n => n === 0x03);
+    }
 
     for (const neighbor of neighbors) {
       if (neighbor === goalMapId) {
@@ -276,19 +286,27 @@ export function findClosestPokecenter(currentMapId: number, playerX: number, pla
     };
   }
 
+  // Handle Route 4 East split (X >= 24): The Mt Moon Pokecenter is impassable due to one-way ledges!
+  const isRoute4East = currentMapId === 0x0F && playerX >= 24;
+
   let bestCenter: PokecenterLocation | null = null;
   let bestPath: number[] = [];
   let bestScore = Infinity;
 
   for (const center of POKECENTERS) {
-    const path = findShortestMapPath(currentMapId, center.outdoorMapId);
+    // If on Route 4 East, ignore Route 4 Mt Moon Pokecenter (0x0F) because it is physically unreachable by walking
+    if (isRoute4East && center.outdoorMapId === 0x0F) {
+      continue;
+    }
+
+    const path = findShortestMapPath(currentMapId, center.outdoorMapId, playerX);
     if (!path) continue;
 
     // Path length in maps (weighted 100 tiles per map transition) + Manhattan distance to door
     const mapHops = path.length - 1;
-    const doorDistance = (currentMapId === center.outdoorMapId)
+    const doorDistance = (currentMapId === center.outdoorMapId && !isRoute4East)
       ? (Math.abs(playerX - center.doorCoords.x) + Math.abs(playerY - center.doorCoords.y))
-      : (mapHops * 100);
+      : (mapHops * 100 + Math.abs(playerX - center.doorCoords.x) + Math.abs(playerY - center.doorCoords.y));
 
     const totalScore = mapHops * 100 + doorDistance;
 
@@ -301,14 +319,14 @@ export function findClosestPokecenter(currentMapId: number, playerX: number, pla
 
   if (!bestCenter) return null;
 
-  const isSameMap = currentMapId === bestCenter.outdoorMapId;
+  const isSameMap = currentMapId === bestCenter.outdoorMapId && !isRoute4East;
   const distToDoor = Math.abs(playerX - bestCenter.doorCoords.x) + Math.abs(playerY - bestCenter.doorCoords.y);
 
   let nextStepDescription = '';
   if (isSameMap) {
     nextStepDescription = `Porte du ${bestCenter.name} en (${bestCenter.doorCoords.x}, ${bestCenter.doorCoords.y}) - Dist: ${distToDoor} pas`;
   } else {
-    const nextMapId = bestPath[1];
+    const nextMapId = bestPath[1] || bestCenter.outdoorMapId;
     const nextMapName = POKEMON_YELLOW_MAPS[nextMapId] || `Map 0x${nextMapId.toString(16).toUpperCase()}`;
     nextStepDescription = `Rejoindre ${nextMapName} en direction du ${bestCenter.name} (${bestPath.length - 1} zone(s) restante(s))`;
   }

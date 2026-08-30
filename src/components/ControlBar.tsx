@@ -19,12 +19,10 @@ import {
   Cast,
   X,
   Bot,
-  Terminal,
   Layers,
   SlidersHorizontal,
   HardDrive,
   HeartPulse,
-  Clock,
   Compass
 } from 'lucide-react';
 import { TrainerBotMode } from '../services/simpleTrainerBot';
@@ -48,7 +46,6 @@ interface ControlBarProps {
   onTargetLevelChange?: (level: number) => void;
   onBotModeChange?: (mode: TrainerBotMode) => void;
   onToggleBot?: () => void;
-  onOpenBotLogs?: () => void;
   isHealRunning?: boolean;
   healProgress?: AutoHealProgress | null;
   onToggleAutoHeal?: () => void;
@@ -87,7 +84,6 @@ export function ControlBar({
   onTargetLevelChange,
   onBotModeChange,
   onToggleBot,
-  onOpenBotLogs,
   isHealRunning = false,
   healProgress = null,
   onToggleAutoHeal,
@@ -190,9 +186,9 @@ export function ControlBar({
         {/* Battle Bot Running Pill */}
         {isBotRunning && (
           <button
-            onClick={onOpenBotLogs || onToggleBot}
+            onClick={onToggleBot}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500 text-zinc-950 text-xs font-black shadow-lg border border-emerald-300 backdrop-blur-md cursor-pointer animate-pulse hover:scale-105 active:scale-95 transition-all"
-            title="Bot d'entraînement actif"
+            title="Bot d'entraînement actif (cliquer pour arrêter)"
           >
             <Bot className="w-3.5 h-3.5" />
             <span>Bot XP</span>
@@ -495,41 +491,33 @@ export function ControlBar({
                       </span>
                     </div>
 
-                    {/* Primary Action Buttons */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => {
-                          const willStart = !isBotRunning;
-                          onToggleBot();
-                          if (willStart) {
-                            setIsMenuOpen(false);
-                          }
-                        }}
-                        className={`p-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm ${
-                          isBotRunning
-                            ? 'bg-rose-600 hover:bg-rose-500 text-white font-extrabold'
-                            : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black'
-                        }`}
-                      >
-                        {isBotRunning ? (
-                          <Pause className="w-3.5 h-3.5 fill-current" />
-                        ) : (
-                          <Play className="w-3.5 h-3.5 fill-current" />
-                        )}
-                        <span>{isBotRunning ? 'Arrêter XP' : 'Démarrer XP'}</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
+                    {/* Primary Action Button */}
+                    <button
+                      onClick={() => {
+                        const willStart = !isBotRunning;
+                        onToggleBot?.();
+                        if (willStart) {
                           setIsMenuOpen(false);
-                          onOpenBotLogs?.();
-                        }}
-                        className="p-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Journal & Logs</span>
-                      </button>
-                    </div>
+                        }
+                      }}
+                      className={`w-full py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm ${
+                        isBotRunning
+                          ? 'bg-rose-600 hover:bg-rose-500 text-white font-extrabold'
+                          : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black'
+                      }`}
+                    >
+                      {isBotRunning ? (
+                        <>
+                          <Pause className="w-3.5 h-3.5 fill-current" />
+                          <span>Arrêter le Bot d'Entraînement</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Lancer le Bot d'Entraînement (XP)</span>
+                        </>
+                      )}
+                    </button>
 
                     {/* Mode Selector */}
                     <div className="space-y-1.5 pt-1">
