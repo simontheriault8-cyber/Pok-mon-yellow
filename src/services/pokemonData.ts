@@ -544,430 +544,167 @@ export const GYM_LEADERS: Record<number, GymLeaderInfo> = {
 };
 
 // ============================================================================
-// WILD POKÉMON ENCOUNTERS DATABASE (Pokémon Yellow - Land & Marine / Water / Fishing)
+// WILD POKÉMON ENCOUNTERS DATABASE (Pokémon Yellow)
 // ============================================================================
 
-export type EncounterCategory = 'walk' | 'surf' | 'fish';
-
 export interface WildEncounter {
-  dexId: number;
   name: string;
   levels: string;
   chance: number; // percentage %
   types: PokemonType[];
-  category: EncounterCategory;
-  methodLabel?: string; // e.g. 'Tall Grass', 'Surfing', 'Super Rod', 'Good Rod', 'Old Rod'
 }
 
-// Name to National Pokédex ID (1..151) dictionary
-export const NATIONAL_DEX_MAP: Record<string, number> = {
-  'Bulbasaur': 1, 'Ivysaur': 2, 'Venusaur': 3, 'Charmander': 4, 'Charmeleon': 5, 'Charizard': 6,
-  'Squirtle': 7, 'Wartortle': 8, 'Blastoise': 9, 'Caterpie': 10, 'Metapod': 11, 'Butterfree': 12,
-  'Weedle': 13, 'Kakuna': 14, 'Beedrill': 15, 'Pidgey': 16, 'Pidgeotto': 17, 'Pidgeot': 18,
-  'Rattata': 19, 'Raticate': 20, 'Spearow': 21, 'Fearow': 22, 'Ekans': 23, 'Arbok': 24,
-  'Pikachu': 25, 'Raichu': 26, 'Sandshrew': 27, 'Sandslash': 28, 'Nidoran♀': 29, 'Nidorina': 30,
-  'Nidoqueen': 31, 'Nidoran♂': 32, 'Nidorino': 33, 'Nidoking': 34, 'Clefairy': 35, 'Clefable': 36,
-  'Vulpix': 37, 'Ninetales': 38, 'Jigglypuff': 39, 'Wigglytuff': 40, 'Zubat': 41, 'Golbat': 42,
-  'Oddish': 43, 'Gloom': 44, 'Vileplume': 45, 'Paras': 46, 'Parasect': 47, 'Venonat': 48,
-  'Venomoth': 49, 'Diglett': 50, 'Dugtrio': 51, 'Meowth': 52, 'Persian': 53, 'Psyduck': 54,
-  'Golduck': 55, 'Mankey': 56, 'Primeape': 57, 'Growlithe': 58, 'Arcanine': 59, 'Poliwag': 60,
-  'Poliwhirl': 61, 'Poliwrath': 62, 'Abra': 63, 'Kadabra': 64, 'Alakazam': 65, 'Machop': 66,
-  'Machoke': 67, 'Machamp': 68, 'Bellsprout': 69, 'Weepinbell': 70, 'Victreebel': 71, 'Tentacool': 72,
-  'Tentacruel': 73, 'Geodude': 74, 'Graveler': 75, 'Golem': 76, 'Ponyta': 77, 'Rapidash': 78,
-  'Slowpoke': 79, 'Slowbro': 80, 'Magnemite': 81, 'Magneton': 82, 'Farfetch\'d': 83, 'Doduo': 84,
-  'Dodrio': 85, 'Seel': 86, 'Dewgong': 87, 'Grimer': 88, 'Muk': 89, 'Shellder': 90,
-  'Cloyster': 91, 'Gastly': 92, 'Haunter': 93, 'Gengar': 94, 'Onix': 95, 'Drowzee': 96,
-  'Hypno': 97, 'Krabby': 98, 'Kingler': 99, 'Voltorb': 100, 'Electrode': 101, 'Exeggcute': 102,
-  'Exeggutor': 103, 'Cubone': 104, 'Marowak': 105, 'Hitmonlee': 106, 'Hitmonchan': 107, 'Lickitung': 108,
-  'Koffing': 109, 'Weezing': 110, 'Rhyhorn': 111, 'Rhydon': 112, 'Chansey': 113, 'Tangela': 114,
-  'Kangaskhan': 115, 'Horsea': 116, 'Seadra': 117, 'Goldeen': 118, 'Seaking': 119, 'Staryu': 120,
-  'Starmie': 121, 'Mr. Mime': 122, 'Scyther': 123, 'Jynx': 124, 'Electabuzz': 125, 'Magmar': 126,
-  'Pinsir': 127, 'Tauros': 128, 'Magikarp': 129, 'Gyarados': 130, 'Lapras': 131, 'Ditto': 132,
-  'Eevee': 133, 'Vaporeon': 134, 'Jolteon': 135, 'Flareon': 136, 'Porygon': 137, 'Omanyte': 138,
-  'Omastar': 139, 'Kabuto': 140, 'Kabutops': 141, 'Aerodactyl': 142, 'Snorlax': 143, 'Articuno': 144,
-  'Zapdos': 145, 'Moltres': 146, 'Dratini': 147, 'Dragonair': 148, 'Dragonite': 149, 'Mewtwo': 150,
-  'Mew': 151
-};
-
 export const WILD_ENCOUNTERS_BY_MAP: Record<number, WildEncounter[]> = {
-  // Pallet Town (0x00) - Water / Fishing
-  0x00: [
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 5-40', chance: 100, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 15-20', chance: 50, types: ['Water', 'Poison'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 15', chance: 25, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 120, name: 'Staryu', levels: 'Lv. 15', chance: 25, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 60, name: 'Poliwag', levels: 'Lv. 10', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Good Rod 🎣' },
-    { dexId: 118, name: 'Goldeen', levels: 'Lv. 10', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Good Rod 🎣' },
-    { dexId: 129, name: 'Magikarp', levels: 'Lv. 5', chance: 100, types: ['Water'], category: 'fish', methodLabel: 'Old Rod 🎣' },
-  ],
-
-  // Viridian City (0x01) - Pond & Fishing
-  0x01: [
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15-25', chance: 85, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 55, name: 'Golduck', levels: 'Lv. 25-35', chance: 15, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 60, name: 'Poliwag', levels: 'Lv. 15', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 61, name: 'Poliwhirl', levels: 'Lv. 20', chance: 25, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 118, name: 'Goldeen', levels: 'Lv. 15', chance: 25, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 129, name: 'Magikarp', levels: 'Lv. 5', chance: 100, types: ['Water'], category: 'fish', methodLabel: 'Old Rod 🎣' },
-  ],
-
-  // Cerulean City (0x03) - River / Gym Waters
-  0x03: [
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15-25', chance: 85, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 55, name: 'Golduck', levels: 'Lv. 25-35', chance: 15, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 118, name: 'Goldeen', levels: 'Lv. 15', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 119, name: 'Seaking', levels: 'Lv. 20', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 98, name: 'Krabby', levels: 'Lv. 15', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 129, name: 'Magikarp', levels: 'Lv. 5', chance: 100, types: ['Water'], category: 'fish', methodLabel: 'Old Rod 🎣' },
-  ],
-
-  // Vermilion City & Harbor (0x05)
-  0x05: [
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 5-40', chance: 100, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 15', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 98, name: 'Krabby', levels: 'Lv. 15', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 116, name: 'Horsea', levels: 'Lv. 15', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 129, name: 'Magikarp', levels: 'Lv. 5', chance: 100, types: ['Water'], category: 'fish', methodLabel: 'Old Rod 🎣' },
-  ],
-
-  // Celadon City (0x06) - Polluted Pond
-  0x06: [
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15-25', chance: 80, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 89, name: 'Muk', levels: 'Lv. 25', chance: 15, types: ['Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 88, name: 'Grimer', levels: 'Lv. 20', chance: 5, types: ['Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 109, name: 'Koffing', levels: 'Lv. 15', chance: 50, types: ['Poison'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 88, name: 'Grimer', levels: 'Lv. 15', chance: 50, types: ['Poison'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 129, name: 'Magikarp', levels: 'Lv. 5', chance: 100, types: ['Water'], category: 'fish', methodLabel: 'Old Rod 🎣' },
-  ],
-
-  // Fuchsia City (0x07) - Ponds & Fishing
-  0x07: [
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15-25', chance: 85, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 55, name: 'Golduck', levels: 'Lv. 25-35', chance: 15, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 130, name: 'Gyarados', levels: 'Lv. 25', chance: 40, types: ['Water', 'Flying'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 119, name: 'Seaking', levels: 'Lv. 20', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 61, name: 'Poliwhirl', levels: 'Lv. 20', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 129, name: 'Magikarp', levels: 'Lv. 5', chance: 100, types: ['Water'], category: 'fish', methodLabel: 'Old Rod 🎣' },
-  ],
-
-  // Cinnabar Island (0x08) - Surfing & Deep Sea Fishing
-  0x08: [
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 5-40', chance: 95, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 73, name: 'Tentacruel', levels: 'Lv. 35-40', chance: 5, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 120, name: 'Staryu', levels: 'Lv. 15-20', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 15-20', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 116, name: 'Horsea', levels: 'Lv. 15', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 129, name: 'Magikarp', levels: 'Lv. 5', chance: 100, types: ['Water'], category: 'fish', methodLabel: 'Old Rod 🎣' },
-  ],
-
   // Route 1 (0x0C)
   0x0C: [
-    { dexId: 16, name: 'Pidgey', levels: 'Lv. 3-5', chance: 70, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 2-4', chance: 30, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
+    { name: 'Pidgey', levels: 'Lv. 3-5', chance: 70, types: ['Normal', 'Flying'] },
+    { name: 'Rattata', levels: 'Lv. 2-4', chance: 30, types: ['Normal'] },
   ],
-
   // Route 2 (0x0D)
   0x0D: [
-    { dexId: 16, name: 'Pidgey', levels: 'Lv. 3-7', chance: 45, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 2-5', chance: 35, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 29, name: 'Nidoran♀', levels: 'Lv. 4-6', chance: 10, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 32, name: 'Nidoran♂', levels: 'Lv. 4-6', chance: 10, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
+    { name: 'Pidgey', levels: 'Lv. 3-7', chance: 45, types: ['Normal', 'Flying'] },
+    { name: 'Rattata', levels: 'Lv. 2-5', chance: 35, types: ['Normal'] },
+    { name: 'Nidoran♀', levels: 'Lv. 4-6', chance: 10, types: ['Poison'] },
+    { name: 'Nidoran♂', levels: 'Lv. 4-6', chance: 10, types: ['Poison'] },
   ],
-
   // Viridian Forest (0x33)
   0x33: [
-    { dexId: 10, name: 'Caterpie', levels: 'Lv. 3-6', chance: 35, types: ['Bug'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 11, name: 'Metapod', levels: 'Lv. 4-8', chance: 20, types: ['Bug'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 16, name: 'Pidgey', levels: 'Lv. 3-7', chance: 20, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 17, name: 'Pidgeotto', levels: 'Lv. 9', chance: 10, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 25, name: 'Pikachu', levels: 'Lv. 3-5', chance: 10, types: ['Electric'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 12, name: 'Butterfree', levels: 'Lv. 9', chance: 5, types: ['Bug', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
+    { name: 'Caterpie', levels: 'Lv. 3-6', chance: 35, types: ['Bug'] },
+    { name: 'Metapod', levels: 'Lv. 4-8', chance: 20, types: ['Bug'] },
+    { name: 'Pidgey', levels: 'Lv. 3-7', chance: 20, types: ['Normal', 'Flying'] },
+    { name: 'Pidgeotto', levels: 'Lv. 9', chance: 10, types: ['Normal', 'Flying'] },
+    { name: 'Pikachu', levels: 'Lv. 3-5', chance: 10, types: ['Electric'] },
+    { name: 'Butterfree', levels: 'Lv. 9', chance: 5, types: ['Bug', 'Flying'] },
   ],
-
   // Route 3 (0x0E)
   0x0E: [
-    { dexId: 21, name: 'Spearow', levels: 'Lv. 8-12', chance: 45, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 9-11', chance: 25, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 56, name: 'Mankey', levels: 'Lv. 8-10', chance: 15, types: ['Fighting'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 39, name: 'Jigglypuff', levels: 'Lv. 9-12', chance: 10, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 27, name: 'Sandshrew', levels: 'Lv. 8-10', chance: 5, types: ['Ground'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
+    { name: 'Spearow', levels: 'Lv. 8-12', chance: 45, types: ['Normal', 'Flying'] },
+    { name: 'Rattata', levels: 'Lv. 9-11', chance: 25, types: ['Normal'] },
+    { name: 'Mankey', levels: 'Lv. 8-10', chance: 15, types: ['Fighting'] },
+    { name: 'Jigglypuff', levels: 'Lv. 9-12', chance: 10, types: ['Normal'] },
+    { name: 'Sandshrew', levels: 'Lv. 8-10', chance: 5, types: ['Ground'] },
   ],
-
-  // Route 4 (0x0F) - Grass & River
+  // Route 4 (0x0F)
   0x0F: [
-    { dexId: 21, name: 'Spearow', levels: 'Lv. 8-12', chance: 40, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 8-12', chance: 30, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 56, name: 'Mankey', levels: 'Lv. 10-12', chance: 20, types: ['Fighting'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 27, name: 'Sandshrew', levels: 'Lv. 8-12', chance: 10, types: ['Ground'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15-25', chance: 85, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 55, name: 'Golduck', levels: 'Lv. 25-35', chance: 15, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 118, name: 'Goldeen', levels: 'Lv. 15', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 60, name: 'Poliwag', levels: 'Lv. 15', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Spearow', levels: 'Lv. 8-12', chance: 40, types: ['Normal', 'Flying'] },
+    { name: 'Rattata', levels: 'Lv. 8-12', chance: 30, types: ['Normal'] },
+    { name: 'Mankey', levels: 'Lv. 10-12', chance: 20, types: ['Fighting'] },
+    { name: 'Sandshrew', levels: 'Lv. 8-12', chance: 10, types: ['Ground'] },
   ],
-
   // Mt. Moon 1F (0x3B)
   0x3B: [
-    { dexId: 41, name: 'Zubat', levels: 'Lv. 7-11', chance: 55, types: ['Poison', 'Flying'], category: 'walk', methodLabel: 'Cave Ground ⛰️' },
-    { dexId: 74, name: 'Geodude', levels: 'Lv. 7-11', chance: 30, types: ['Rock', 'Ground'], category: 'walk', methodLabel: 'Cave Ground ⛰️' },
-    { dexId: 46, name: 'Paras', levels: 'Lv. 8', chance: 10, types: ['Bug', 'Grass'], category: 'walk', methodLabel: 'Cave Ground ⛰️' },
-    { dexId: 35, name: 'Clefairy', levels: 'Lv. 8-13', chance: 5, types: ['Normal'], category: 'walk', methodLabel: 'Cave Ground ⛰️' },
+    { name: 'Zubat', levels: 'Lv. 7-11', chance: 55, types: ['Poison', 'Flying'] },
+    { name: 'Geodude', levels: 'Lv. 7-11', chance: 30, types: ['Rock', 'Ground'] },
+    { name: 'Paras', levels: 'Lv. 8', chance: 10, types: ['Bug', 'Grass'] },
+    { name: 'Clefairy', levels: 'Lv. 8-13', chance: 5, types: ['Normal'] },
   ],
-
-  // Route 24 (0x24) - Nugget Bridge & River
+  // Route 24 (0x24) - Nugget Bridge
   0x24: [
-    { dexId: 69, name: 'Bellsprout', levels: 'Lv. 12-14', chance: 35, types: ['Grass', 'Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 16, name: 'Pidgey', levels: 'Lv. 11-13', chance: 25, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 17, name: 'Pidgeotto', levels: 'Lv. 13', chance: 15, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 63, name: 'Abra', levels: 'Lv. 8-12', chance: 15, types: ['Psychic'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 27, name: 'Sandshrew', levels: 'Lv. 12', chance: 10, types: ['Ground'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15-25', chance: 85, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 55, name: 'Golduck', levels: 'Lv. 25-35', chance: 15, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 118, name: 'Goldeen', levels: 'Lv. 15', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 119, name: 'Seaking', levels: 'Lv. 20', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 98, name: 'Krabby', levels: 'Lv. 15', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Bellsprout', levels: 'Lv. 12-14', chance: 35, types: ['Grass', 'Poison'] },
+    { name: 'Pidgey', levels: 'Lv. 11-13', chance: 25, types: ['Normal', 'Flying'] },
+    { name: 'Pidgeotto', levels: 'Lv. 13', chance: 15, types: ['Normal', 'Flying'] },
+    { name: 'Abra', levels: 'Lv. 8-12', chance: 15, types: ['Psychic'] },
+    { name: 'Sandshrew', levels: 'Lv. 12', chance: 10, types: ['Ground'] },
   ],
-
   // Route 25 (0x25) - Bill's Sea Cottage
   0x25: [
-    { dexId: 69, name: 'Bellsprout', levels: 'Lv. 12-14', chance: 35, types: ['Grass', 'Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 16, name: 'Pidgey', levels: 'Lv. 12-14', chance: 25, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 63, name: 'Abra', levels: 'Lv. 9-12', chance: 20, types: ['Psychic'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 27, name: 'Sandshrew', levels: 'Lv. 12-14', chance: 20, types: ['Ground'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15-25', chance: 85, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 55, name: 'Golduck', levels: 'Lv. 25-35', chance: 15, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 98, name: 'Krabby', levels: 'Lv. 15', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 99, name: 'Kingler', levels: 'Lv. 25', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Bellsprout', levels: 'Lv. 12-14', chance: 35, types: ['Grass', 'Poison'] },
+    { name: 'Pidgey', levels: 'Lv. 12-14', chance: 25, types: ['Normal', 'Flying'] },
+    { name: 'Abra', levels: 'Lv. 9-12', chance: 20, types: ['Psychic'] },
+    { name: 'Sandshrew', levels: 'Lv. 12-14', chance: 20, types: ['Ground'] },
   ],
-
   // Route 5 (0x10)
   0x10: [
-    { dexId: 16, name: 'Pidgey', levels: 'Lv. 13-16', chance: 35, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 14-16', chance: 25, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 63, name: 'Abra', levels: 'Lv. 10-16', chance: 20, types: ['Psychic'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 39, name: 'Jigglypuff', levels: 'Lv. 12-16', chance: 15, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 56, name: 'Mankey', levels: 'Lv. 14-16', chance: 5, types: ['Fighting'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
+    { name: 'Pidgey', levels: 'Lv. 13-16', chance: 35, types: ['Normal', 'Flying'] },
+    { name: 'Rattata', levels: 'Lv. 14-16', chance: 25, types: ['Normal'] },
+    { name: 'Abra', levels: 'Lv. 10-16', chance: 20, types: ['Psychic'] },
+    { name: 'Jigglypuff', levels: 'Lv. 12-16', chance: 15, types: ['Normal'] },
+    { name: 'Mankey', levels: 'Lv. 14-16', chance: 5, types: ['Fighting'] },
   ],
-
-  // Route 6 (0x11) - Grass & Pond
+  // Route 6 (0x11)
   0x11: [
-    { dexId: 16, name: 'Pidgey', levels: 'Lv. 13-16', chance: 35, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 14-16', chance: 25, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 63, name: 'Abra', levels: 'Lv. 15', chance: 20, types: ['Psychic'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 39, name: 'Jigglypuff', levels: 'Lv. 12-16', chance: 15, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 56, name: 'Mankey', levels: 'Lv. 14-16', chance: 5, types: ['Fighting'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15-25', chance: 85, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 55, name: 'Golduck', levels: 'Lv. 25-35', chance: 15, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 15', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 98, name: 'Krabby', levels: 'Lv. 15', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 118, name: 'Goldeen', levels: 'Lv. 15', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Pidgey', levels: 'Lv. 13-16', chance: 35, types: ['Normal', 'Flying'] },
+    { name: 'Rattata', levels: 'Lv. 14-16', chance: 25, types: ['Normal'] },
+    { name: 'Abra', levels: 'Lv. 15', chance: 20, types: ['Psychic'] },
+    { name: 'Jigglypuff', levels: 'Lv. 12-16', chance: 15, types: ['Normal'] },
+    { name: 'Mankey', levels: 'Lv. 14-16', chance: 5, types: ['Fighting'] },
   ],
-
-  // Route 11 (0x16) - Grass & Coast
+  // Route 11 (0x16)
   0x16: [
-    { dexId: 21, name: 'Spearow', levels: 'Lv. 13-17', chance: 35, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 96, name: 'Drowzee', levels: 'Lv. 15-19', chance: 30, types: ['Psychic'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 13-15', chance: 20, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 27, name: 'Sandshrew', levels: 'Lv. 15', chance: 15, types: ['Ground'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 5-30', chance: 100, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 15', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 98, name: 'Krabby', levels: 'Lv. 15', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 116, name: 'Horsea', levels: 'Lv. 15', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Spearow', levels: 'Lv. 13-17', chance: 35, types: ['Normal', 'Flying'] },
+    { name: 'Drowzee', levels: 'Lv. 15-19', chance: 30, types: ['Psychic'] },
+    { name: 'Rattata', levels: 'Lv. 13-15', chance: 20, types: ['Normal'] },
+    { name: 'Sandshrew', levels: 'Lv. 15', chance: 15, types: ['Ground'] },
   ],
-
   // Route 9 (0x14)
   0x14: [
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 15-18', chance: 30, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 21, name: 'Spearow', levels: 'Lv. 16-19', chance: 30, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 29, name: 'Nidoran♀', levels: 'Lv. 16-18', chance: 15, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 32, name: 'Nidoran♂', levels: 'Lv. 16-18', chance: 15, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 30, name: 'Nidorina', levels: 'Lv. 20', chance: 5, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 33, name: 'Nidorino', levels: 'Lv. 20', chance: 5, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
+    { name: 'Rattata', levels: 'Lv. 15-18', chance: 30, types: ['Normal'] },
+    { name: 'Spearow', levels: 'Lv. 16-19', chance: 30, types: ['Normal', 'Flying'] },
+    { name: 'Nidoran♀ / ♂', levels: 'Lv. 16-18', chance: 25, types: ['Poison'] },
+    { name: 'Nidorina / Nidorino', levels: 'Lv. 20', chance: 15, types: ['Poison'] },
   ],
-
-  // Route 10 (0x15 / 0x18) - Power Plant Water Route
+  // Route 10 (0x15 / 0x18)
   0x15: [
-    { dexId: 81, name: 'Magnemite', levels: 'Lv. 16-22', chance: 35, types: ['Electric'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 100, name: 'Voltorb', levels: 'Lv. 16-22', chance: 30, types: ['Electric'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 21, name: 'Spearow', levels: 'Lv. 18', chance: 20, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 66, name: 'Machop', levels: 'Lv. 16-20', chance: 15, types: ['Fighting'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 15-30', chance: 85, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 79, name: 'Slowpoke', levels: 'Lv. 20-30', chance: 15, types: ['Water', 'Psychic'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 116, name: 'Horsea', levels: 'Lv. 15-20', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 98, name: 'Krabby', levels: 'Lv. 15', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 147, name: 'Dratini', levels: 'Lv. 15', chance: 20, types: ['Dragon'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Magnemite', levels: 'Lv. 16-22', chance: 35, types: ['Electric'] },
+    { name: 'Voltorb', levels: 'Lv. 16-22', chance: 30, types: ['Electric'] },
+    { name: 'Spearow', levels: 'Lv. 18', chance: 20, types: ['Normal', 'Flying'] },
+    { name: 'Machop', levels: 'Lv. 16-20', chance: 15, types: ['Fighting'] },
   ],
   0x18: [
-    { dexId: 81, name: 'Magnemite', levels: 'Lv. 16-22', chance: 35, types: ['Electric'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 100, name: 'Voltorb', levels: 'Lv. 16-22', chance: 30, types: ['Electric'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 21, name: 'Spearow', levels: 'Lv. 18', chance: 20, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 66, name: 'Machop', levels: 'Lv. 16-20', chance: 15, types: ['Fighting'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 15-30', chance: 85, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 79, name: 'Slowpoke', levels: 'Lv. 20-30', chance: 15, types: ['Water', 'Psychic'], category: 'surf', methodLabel: 'Surfing 🌊' },
+    { name: 'Magnemite', levels: 'Lv. 16-22', chance: 35, types: ['Electric'] },
+    { name: 'Voltorb', levels: 'Lv. 16-22', chance: 30, types: ['Electric'] },
+    { name: 'Spearow', levels: 'Lv. 18', chance: 20, types: ['Normal', 'Flying'] },
+    { name: 'Machop', levels: 'Lv. 16-20', chance: 15, types: ['Fighting'] },
   ],
-
   // Route 8 (0x13)
   0x13: [
-    { dexId: 16, name: 'Pidgey', levels: 'Lv. 18-22', chance: 30, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 17, name: 'Pidgeotto', levels: 'Lv. 20-24', chance: 25, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 18-20', chance: 20, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 64, name: 'Kadabra', levels: 'Lv. 20-27', chance: 15, types: ['Psychic'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 63, name: 'Abra', levels: 'Lv. 15-19', chance: 10, types: ['Psychic'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
+    { name: 'Pidgey', levels: 'Lv. 18-22', chance: 30, types: ['Normal', 'Flying'] },
+    { name: 'Pidgeotto', levels: 'Lv. 20-24', chance: 25, types: ['Normal', 'Flying'] },
+    { name: 'Rattata', levels: 'Lv. 18-20', chance: 20, types: ['Normal'] },
+    { name: 'Kadabra', levels: 'Lv. 20-27', chance: 15, types: ['Psychic'] },
+    { name: 'Abra', levels: 'Lv. 15-19', chance: 10, types: ['Psychic'] },
   ],
-
   // Route 7 (0x12)
   0x12: [
-    { dexId: 16, name: 'Pidgey', levels: 'Lv. 19-22', chance: 35, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 19-21', chance: 30, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 39, name: 'Jigglypuff', levels: 'Lv. 19-24', chance: 20, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 63, name: 'Abra', levels: 'Lv. 19', chance: 15, types: ['Psychic'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
+    { name: 'Pidgey', levels: 'Lv. 19-22', chance: 35, types: ['Normal', 'Flying'] },
+    { name: 'Rattata', levels: 'Lv. 19-21', chance: 30, types: ['Normal'] },
+    { name: 'Jigglypuff', levels: 'Lv. 19-24', chance: 20, types: ['Normal'] },
+    { name: 'Abra', levels: 'Lv. 19', chance: 15, types: ['Psychic'] },
   ],
-
-  // Route 12 (0x17) - Fishing Mecca
+  // Route 12 (0x17)
   0x17: [
-    { dexId: 69, name: 'Bellsprout', levels: 'Lv. 24-26', chance: 35, types: ['Grass', 'Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 70, name: 'Weepinbell', levels: 'Lv. 28-30', chance: 25, types: ['Grass', 'Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 17, name: 'Pidgeotto', levels: 'Lv. 28-30', chance: 20, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 58, name: 'Growlithe', levels: 'Lv. 24-26', chance: 20, types: ['Fire'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 15-30', chance: 90, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 73, name: 'Tentacruel', levels: 'Lv. 30-35', chance: 10, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 79, name: 'Slowpoke', levels: 'Lv. 15-25', chance: 40, types: ['Water', 'Psychic'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 98, name: 'Krabby', levels: 'Lv. 15', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 99, name: 'Kingler', levels: 'Lv. 25', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 116, name: 'Horsea', levels: 'Lv. 15', chance: 10, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Bellsprout', levels: 'Lv. 24-26', chance: 35, types: ['Grass', 'Poison'] },
+    { name: 'Weepinbell', levels: 'Lv. 28-30', chance: 25, types: ['Grass', 'Poison'] },
+    { name: 'Pidgeotto', levels: 'Lv. 28-30', chance: 20, types: ['Normal', 'Flying'] },
+    { name: 'Growlithe', levels: 'Lv. 24-26', chance: 20, types: ['Fire'] },
   ],
-
-  // Route 13 (0x19)
-  0x19: [
-    { dexId: 69, name: 'Bellsprout', levels: 'Lv. 24-27', chance: 30, types: ['Grass', 'Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 70, name: 'Weepinbell', levels: 'Lv. 28-30', chance: 25, types: ['Grass', 'Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 17, name: 'Pidgeotto', levels: 'Lv. 28-30', chance: 20, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 132, name: 'Ditto', levels: 'Lv. 25', chance: 15, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 83, name: 'Farfetch\'d', levels: 'Lv. 26', chance: 10, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 15-30', chance: 90, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 73, name: 'Tentacruel', levels: 'Lv. 30-35', chance: 10, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 79, name: 'Slowpoke', levels: 'Lv. 15-25', chance: 40, types: ['Water', 'Psychic'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 98, name: 'Krabby', levels: 'Lv. 15', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 99, name: 'Kingler', levels: 'Lv. 25', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 116, name: 'Horsea', levels: 'Lv. 15', chance: 10, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-  ],
-
   // Route 16 (0x1C)
   0x1C: [
-    { dexId: 84, name: 'Doduo', levels: 'Lv. 22-26', chance: 40, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 22', chance: 30, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 20, name: 'Raticate', levels: 'Lv. 25-28', chance: 20, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 21, name: 'Spearow', levels: 'Lv. 20-24', chance: 10, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
+    { name: 'Doduo', levels: 'Lv. 22-26', chance: 40, types: ['Normal', 'Flying'] },
+    { name: 'Rattata', levels: 'Lv. 22', chance: 30, types: ['Normal'] },
+    { name: 'Raticate', levels: 'Lv. 25-28', chance: 20, types: ['Normal'] },
+    { name: 'Spearow', levels: 'Lv. 20-24', chance: 10, types: ['Normal', 'Flying'] },
   ],
-
-  // Route 17 (0x1D - Cycling Road Ocean Coast)
+  // Route 17 (Cycling Road - 0x1D)
   0x1D: [
-    { dexId: 84, name: 'Doduo', levels: 'Lv. 26-29', chance: 35, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 22, name: 'Fearow', levels: 'Lv. 26-29', chance: 25, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 20, name: 'Raticate', levels: 'Lv. 25-29', chance: 25, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 85, name: 'Dodrio', levels: 'Lv. 29', chance: 15, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 15-30', chance: 90, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 73, name: 'Tentacruel', levels: 'Lv. 30-35', chance: 10, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 20', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 20', chance: 40, types: ['Water', 'Poison'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 120, name: 'Staryu', levels: 'Lv. 20', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Doduo', levels: 'Lv. 26-29', chance: 35, types: ['Normal', 'Flying'] },
+    { name: 'Fearow', levels: 'Lv. 26-29', chance: 25, types: ['Normal', 'Flying'] },
+    { name: 'Raticate', levels: 'Lv. 25-29', chance: 25, types: ['Normal'] },
+    { name: 'Dodrio', levels: 'Lv. 29', chance: 15, types: ['Normal', 'Flying'] },
   ],
-
-  // Route 18 (0x1E)
-  0x1E: [
-    { dexId: 84, name: 'Doduo', levels: 'Lv. 24-28', chance: 40, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 22, name: 'Fearow', levels: 'Lv. 26-29', chance: 30, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 20, name: 'Raticate', levels: 'Lv. 25-29', chance: 30, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 15-30', chance: 90, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 73, name: 'Tentacruel', levels: 'Lv. 30-35', chance: 10, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 20', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 120, name: 'Staryu', levels: 'Lv. 20', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 116, name: 'Horsea', levels: 'Lv. 20', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-  ],
-
-  // Route 19 (0x1F - Fuchsia Open Sea)
-  0x1F: [
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 5-40', chance: 90, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 73, name: 'Tentacruel', levels: 'Lv. 35-40', chance: 10, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 120, name: 'Staryu', levels: 'Lv. 20-25', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 20-25', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 73, name: 'Tentacruel', levels: 'Lv. 30', chance: 20, types: ['Water', 'Poison'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-  ],
-
-  // Route 20 (0x20 - Seafoam Sea)
-  0x20: [
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 5-40', chance: 85, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 73, name: 'Tentacruel', levels: 'Lv. 35-40', chance: 10, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 87, name: 'Dewgong', levels: 'Lv. 30-35', chance: 5, types: ['Water', 'Ice'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 120, name: 'Staryu', levels: 'Lv. 20-25', chance: 35, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 20-25', chance: 35, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 117, name: 'Seadra', levels: 'Lv. 25-30', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 130, name: 'Gyarados', levels: 'Lv. 25', chance: 10, types: ['Water', 'Flying'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-  ],
-
-  // Route 21 (0x22 - Pallet to Cinnabar Ocean Channel)
-  0x22: [
-    { dexId: 72, name: 'Tentacool', levels: 'Lv. 5-40', chance: 90, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 73, name: 'Tentacruel', levels: 'Lv. 35-40', chance: 10, types: ['Water', 'Poison'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 20', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 120, name: 'Staryu', levels: 'Lv. 20', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 116, name: 'Horsea', levels: 'Lv. 20', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 114, name: 'Tangela', levels: 'Lv. 28-32', chance: 100, types: ['Grass'], category: 'walk', methodLabel: 'South Grass Patch 🌿' },
-  ],
-
-  // Route 22 (0x21 - League Entrance Pond)
+  // Route 22 (0x21)
   0x21: [
-    { dexId: 19, name: 'Rattata', levels: 'Lv. 2-4', chance: 40, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 29, name: 'Nidoran♀', levels: 'Lv. 2-4', chance: 20, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 32, name: 'Nidoran♂', levels: 'Lv. 2-4', chance: 20, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 21, name: 'Spearow', levels: 'Lv. 3-5', chance: 10, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 56, name: 'Mankey', levels: 'Lv. 3-5', chance: 10, types: ['Fighting'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 60, name: 'Poliwag', levels: 'Lv. 15-25', chance: 80, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 61, name: 'Poliwhirl', levels: 'Lv. 20-30', chance: 20, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 60, name: 'Poliwag', levels: 'Lv. 15', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 118, name: 'Goldeen', levels: 'Lv. 15', chance: 50, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Rattata', levels: 'Lv. 2-4', chance: 40, types: ['Normal'] },
+    { name: 'Nidoran♀', levels: 'Lv. 2-4', chance: 20, types: ['Poison'] },
+    { name: 'Nidoran♂', levels: 'Lv. 2-4', chance: 20, types: ['Poison'] },
+    { name: 'Spearow', levels: 'Lv. 3-5', chance: 10, types: ['Normal', 'Flying'] },
+    { name: 'Mankey', levels: 'Lv. 3-5', chance: 10, types: ['Fighting'] },
   ],
-
-  // Route 23 (0x23) - Victory Road Access Water
+  // Route 23 (0x23) - Victory Road Access
   0x23: [
-    { dexId: 22, name: 'Fearow', levels: 'Lv. 38-44', chance: 35, types: ['Normal', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 57, name: 'Primeape', levels: 'Lv. 38-44', chance: 30, types: ['Fighting'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 28, name: 'Sandslash', levels: 'Lv. 41-44', chance: 20, types: ['Ground'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 24, name: 'Arbok', levels: 'Lv. 41-44', chance: 15, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 79, name: 'Slowpoke', levels: 'Lv. 25-35', chance: 70, types: ['Water', 'Psychic'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 80, name: 'Slowbro', levels: 'Lv. 35-40', chance: 20, types: ['Water', 'Psychic'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 99, name: 'Kingler', levels: 'Lv. 35', chance: 10, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 119, name: 'Seaking', levels: 'Lv. 30', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 99, name: 'Kingler', levels: 'Lv. 30', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 61, name: 'Poliwhirl', levels: 'Lv. 30', chance: 20, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-  ],
-
-  // Safari Zone (0xCF, 0xD0, 0xD1, 0xD2)
-  0xCF: [
-    { dexId: 30, name: 'Nidorina', levels: 'Lv. 24', chance: 20, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 33, name: 'Nidorino', levels: 'Lv. 24', chance: 20, types: ['Poison'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 102, name: 'Exeggcute', levels: 'Lv. 24-26', chance: 20, types: ['Grass', 'Psychic'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 111, name: 'Rhyhorn', levels: 'Lv. 25', chance: 15, types: ['Ground', 'Rock'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 113, name: 'Chansey', levels: 'Lv. 28', chance: 10, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 128, name: 'Tauros', levels: 'Lv. 28', chance: 10, types: ['Normal'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 123, name: 'Scyther', levels: 'Lv. 28', chance: 5, types: ['Bug', 'Flying'], category: 'walk', methodLabel: 'Tall Grass 🌿' },
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15-25', chance: 80, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 79, name: 'Slowpoke', levels: 'Lv. 15-25', chance: 15, types: ['Water', 'Psychic'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 147, name: 'Dratini', levels: 'Lv. 15', chance: 5, types: ['Dragon'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 147, name: 'Dratini', levels: 'Lv. 15', chance: 25, types: ['Dragon'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 148, name: 'Dragonair', levels: 'Lv. 25', chance: 10, types: ['Dragon'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 54, name: 'Psyduck', levels: 'Lv. 15', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 79, name: 'Slowpoke', levels: 'Lv. 15', chance: 25, types: ['Water', 'Psychic'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 129, name: 'Magikarp', levels: 'Lv. 15', chance: 10, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-  ],
-
-  // Seafoam Islands B4F (0x9E - Articuno Ice River)
-  0x9E: [
-    { dexId: 86, name: 'Seel', levels: 'Lv. 28-35', chance: 50, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 87, name: 'Dewgong', levels: 'Lv. 35-42', chance: 30, types: ['Water', 'Ice'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 116, name: 'Horsea', levels: 'Lv. 28-32', chance: 10, types: ['Water'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 79, name: 'Slowpoke', levels: 'Lv. 28', chance: 10, types: ['Water', 'Psychic'], category: 'surf', methodLabel: 'Surfing 🌊' },
-    { dexId: 117, name: 'Seadra', levels: 'Lv. 30', chance: 40, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 90, name: 'Shellder', levels: 'Lv. 30', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
-    { dexId: 120, name: 'Staryu', levels: 'Lv. 30', chance: 30, types: ['Water'], category: 'fish', methodLabel: 'Super Rod 🎣' },
+    { name: 'Fearow', levels: 'Lv. 38-44', chance: 35, types: ['Normal', 'Flying'] },
+    { name: 'Primeape', levels: 'Lv. 38-44', chance: 30, types: ['Fighting'] },
+    { name: 'Sandslash', levels: 'Lv. 41-44', chance: 20, types: ['Ground'] },
+    { name: 'Arbok', levels: 'Lv. 41-44', chance: 15, types: ['Poison'] },
   ],
 };

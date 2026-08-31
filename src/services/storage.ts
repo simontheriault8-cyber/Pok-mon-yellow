@@ -41,7 +41,6 @@ export interface AppSettings {
   keyBindings: KeyBindings;
   touchConfig: TouchControlsConfig;
   autoSaveBattery: boolean;
-  batterySaverBotScreenOff: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -51,8 +50,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   isMuted: false,
   keyBindings: DEFAULT_KEY_BINDINGS,
   touchConfig: DEFAULT_TOUCH_CONFIG,
-  autoSaveBattery: true,
-  batterySaverBotScreenOff: true
+  autoSaveBattery: true
 };
 
 const ROM_PREFIX = 'gbc_rom_';

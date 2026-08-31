@@ -1,6 +1,5 @@
 // Pokemon Yellow (Special Pikachu Edition) & Yellow 151 Hack RAM Layout Specification
 // This file centralizes memory addresses for Yellow / Yellow 151 (English and French / European offsets).
-import { GEN1_INTERNAL_POKEMON } from './pokemonData';
 
 export function getRamOffset(mmu: any): number {
   if (!mmu) return 0;
@@ -36,11 +35,11 @@ export function getRamOffset(mmu: any): number {
   for (let i = 0x134; i <= 0x142; i++) {
     titleStr += String.fromCharCode(mmu.read(i));
   }
-  return titleStr.includes('JAUNE') ? -1 : 0;
+  return titleStr.includes('JAUNE') ? 1 : 0;
 }
 
 export function resolveAddr(enAddr: number, mmu: any): number {
-  if (enAddr < 0xC000 || enAddr > 0xDFFF) {
+  if (enAddr < 0xD000) {
     return enAddr;
   }
   return enAddr + getRamOffset(mmu);
@@ -96,88 +95,6 @@ export function readPartyStatusFromRAM(mmu: any): PartyStatusData {
   return { isValid: false, totalMons: 1, aliveMons: 1, faintedMons: 0, monsHp: [] };
 }
 
-export interface PokedexStatusData {
-  ownedDexIds: number[];
-  seenDexIds: number[];
-  ownedCount: number;
-  seenCount: number;
-}
-
-export function readPokedexFromRAM(mmu: any): PokedexStatusData {
-  if (!mmu || typeof mmu.read !== 'function') {
-    return { ownedDexIds: [], seenDexIds: [], ownedCount: 0, seenCount: 0 };
-  }
-
-  const ownedSet = new Set<number>();
-  const seenSet = new Set<number>();
-
-  const offset = getRamOffset(mmu);
-  const ownedBase = resolveAddr(POKEMON_YELLOW_RAM.POKEDEX_OWNED_EN, mmu);
-  const seenBase = resolveAddr(POKEMON_YELLOW_RAM.POKEDEX_SEEN_EN, mmu);
-
-  // 1. Read the 19-byte Pokédex bitmask (152 bits for #1..#151)
-  for (let byteIdx = 0; byteIdx < 19; byteIdx++) {
-    const ownedByte = mmu.read(ownedBase + byteIdx);
-    const seenByte = mmu.read(seenBase + byteIdx);
-
-    for (let bitIdx = 0; bitIdx < 8; bitIdx++) {
-      const dexNumber = byteIdx * 8 + bitIdx + 1;
-      if (dexNumber > 151) break;
-
-      if (((ownedByte >> bitIdx) & 1) === 1) {
-        ownedSet.add(dexNumber);
-      }
-      if (((seenByte >> bitIdx) & 1) === 1) {
-        seenSet.add(dexNumber);
-      }
-    }
-  }
-
-  // 2. Also ensure active party Pokémon are recognized as owned & seen
-  const partyAddr = 0xD163 + offset;
-  const pCount = mmu.read(partyAddr);
-  if (pCount >= 1 && pCount <= 6) {
-    const terminator = mmu.read(partyAddr + pCount + 1);
-    if (terminator === 0xFF) {
-      for (let i = 0; i < pCount; i++) {
-        const internalId = mmu.read(partyAddr + 1 + i);
-        const info = GEN1_INTERNAL_POKEMON[internalId];
-        if (info && info.id >= 1 && info.id <= 151) {
-          ownedSet.add(info.id);
-          seenSet.add(info.id);
-        }
-      }
-    }
-  }
-
-  // 3. Also check current active PC Box if populated
-  const boxAddr = 0xDA80 + offset;
-  const boxCount = mmu.read(boxAddr);
-  if (boxCount >= 1 && boxCount <= 20) {
-    const terminator = mmu.read(boxAddr + boxCount + 1);
-    if (terminator === 0xFF) {
-      for (let i = 0; i < boxCount; i++) {
-        const internalId = mmu.read(boxAddr + 1 + i);
-        const info = GEN1_INTERNAL_POKEMON[internalId];
-        if (info && info.id >= 1 && info.id <= 151) {
-          ownedSet.add(info.id);
-          seenSet.add(info.id);
-        }
-      }
-    }
-  }
-
-  const ownedDexIds = Array.from(ownedSet).sort((a, b) => a - b);
-  const seenDexIds = Array.from(seenSet).sort((a, b) => a - b);
-
-  return {
-    ownedDexIds,
-    seenDexIds,
-    ownedCount: ownedDexIds.length,
-    seenCount: seenDexIds.length,
-  };
-}
-
 export const POKEMON_YELLOW_RAM = {
   // Game / Battle State (wIsInBattle)
   // In Pokemon Yellow: 0xD056 (English), 0xD055 (French)
@@ -186,17 +103,6 @@ export const POKEMON_YELLOW_RAM = {
   BATTLE_TYPE_EN: 0xD056,
   BATTLE_TYPE_FR: 0xD055,
   BATTLE_TYPE_RB: 0xD057,
-
-  // Pokédex Memory Arrays (19 bytes = 152 bits, tracking Pokémon #1..#151)
-  // Yellow English: wPokedexOwned = 0xD2F6, wPokedexSeen = 0xD309
-  // Yellow French:  wPokedexOwned = 0xD2F5, wPokedexSeen = 0xD308
-  // Red/Blue EN:   wPokedexOwned = 0xD2F7, wPokedexSeen = 0xD30A
-  POKEDEX_OWNED_EN: 0xD2F6,
-  POKEDEX_OWNED_FR: 0xD2F5,
-  POKEDEX_OWNED_RB: 0xD2F7,
-  POKEDEX_SEEN_EN: 0xD309,
-  POKEDEX_SEEN_FR: 0xD308,
-  POKEDEX_SEEN_RB: 0xD30A,
   
   // Battle Active Mon HP & Max HP
   // Yellow: wBattleMonHP at 0xD015-0xD016, Max HP at 0xD023-0xD024

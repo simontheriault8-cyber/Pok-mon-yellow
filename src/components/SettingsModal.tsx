@@ -14,8 +14,7 @@ import {
   X,
   Gamepad2,
   Sparkles,
-  Move,
-  BatteryCharging
+  Move
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -324,48 +323,6 @@ export function SettingsModal({
                     </button>
                   );
                 })}
-              </div>
-
-              {/* Économie de batterie & Bot d'entraînement */}
-              <div className="pt-2 border-t border-white/[0.06]">
-                <div className="flex items-center justify-between p-3 rounded-xl bg-white/[0.02] border border-white/[0.05]">
-                  <div className="flex items-start gap-2.5 pr-2">
-                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0 mt-0.5">
-                      <BatteryCharging className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <span>Éteindre l'écran pendant le Bot d'entraînement</span>
-                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
-                          Économie Batterie
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-zinc-400 mt-0.5">
-                        Éteint l'écran de jeu lors de l'entraînement auto (OLED Noir pur) tout en gardant le guide et les contrôles actifs.
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={settings.batterySaverBotScreenOff ?? true}
-                    onClick={() =>
-                      onUpdateSettings({
-                        ...settings,
-                        batterySaverBotScreenOff: !(settings.batterySaverBotScreenOff ?? true)
-                      })
-                    }
-                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                      (settings.batterySaverBotScreenOff ?? true) ? 'bg-emerald-500' : 'bg-zinc-800'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                        (settings.batterySaverBotScreenOff ?? true) ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
               </div>
             </div>
           )}
