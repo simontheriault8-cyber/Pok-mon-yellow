@@ -96,35 +96,17 @@ export function readPartyStatusFromRAM(mmu: any): PartyStatusData {
 }
 
 export const POKEMON_YELLOW_RAM = {
-  // Game / Battle State (wIsInBattle)
-  // In Pokemon Yellow: 0xD056 (English), 0xD055 (French)
-  // In Pokemon Red/Blue: 0xD057
-  // Values: 0 = Overworld / No Battle, 1 = Wild Battle, 2 = Trainer Battle, 0xFF = Lost Battle
-  BATTLE_TYPE_EN: 0xD056,
-  BATTLE_TYPE_FR: 0xD055,
-  BATTLE_TYPE_RB: 0xD057,
+  // Game / Battle State
+  // 0 = Overworld, 1 = Wild Battle, 2 = Trainer Battle
+  BATTLE_TYPE_EN: 0xD057,
+  BATTLE_TYPE_FR: 0xD056,
   
   // Battle Active Mon HP & Max HP
   // Yellow: wBattleMonHP at 0xD015-0xD016, Max HP at 0xD023-0xD024
-  BATTLE_MON_SPECIES_EN: 0xD014,
   BATTLE_MON_HP_EN: 0xD015,
-  BATTLE_MON_STATUS_EN: 0xD018,
-  BATTLE_MON_TYPE1_EN: 0xD019,
-  BATTLE_MON_TYPE2_EN: 0xD01A,
-  BATTLE_MON_LEVEL_EN: 0xD022,
   BATTLE_MON_MAX_HP_EN: 0xD023,
-
-  // Enemy Mon Battle Struct (Gen 1 WRAM)
-  // Standard Yellow/Red/Blue EN: wEnemyMon starts at 0xCFE8
-  // French / shifted ROMs: 0xCFE7
-  ENEMY_MON_SPECIES_EN: 0xCFE8,
-  ENEMY_MON_HP_EN: 0xCFE9,
-  ENEMY_MON_STATUS_EN: 0xCFEC,
-  ENEMY_MON_TYPE1_EN: 0xCFED,
-  ENEMY_MON_TYPE2_EN: 0xCFEE,
-  ENEMY_MON_LEVEL_EN: 0xCFF6,
-  ENEMY_MON_MAX_HP_EN: 0xCFF7,
-  ENEMY_MON_SPECIES2_EN: 0xCFD8,
+  BATTLE_MON_HP_FR: 0xD014,
+  BATTLE_MON_MAX_HP_FR: 0xD022,
 
   // Party Count (0xD163 in Yellow English, 0xD162 in French)
   PARTY_COUNT_EN: 0xD163,
