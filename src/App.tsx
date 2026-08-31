@@ -6,7 +6,6 @@ import { useGamepad } from './services/gamepad';
 import { getThemeConfig } from './utils/theme';
 
 import { GbcDisplay } from './components/GbcDisplay';
-import { MobileStatusBar } from './components/MobileStatusBar';
 import { TouchOverlay } from './components/TouchOverlay';
 import { ControlBar } from './components/ControlBar';
 import { SaveStateModal } from './components/SaveStateModal';
@@ -599,10 +598,7 @@ export default function App() {
         onScreenshot={handleScreenshot}
       />
 
-      {/* Mobile Top Status Bar (Visible in portrait mode on mobile devices: Time & Battery) */}
-      <MobileStatusBar />
-
-      {/* Main Full-Screen Game Display Viewport - Just below status bar */}
+      {/* Main Full-Screen Game Display Viewport */}
       <main className="flex-1 w-full relative flex flex-col items-center justify-center bg-black overflow-hidden select-none p-0 m-0">
         <GbcDisplay
           emulator={emulator}

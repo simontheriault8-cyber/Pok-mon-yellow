@@ -56,9 +56,9 @@ export const GbcDisplay = React.memo(function GbcDisplay({
   }, [onScreenCapture]);
 
   return (
-    <div className="relative w-full h-full flex-1 flex flex-col items-center justify-start sm:justify-center bg-black overflow-hidden select-none p-0 sm:p-4">
-      {/* 160x144 Native Aspect Ratio Frame (10:9) scaled to fit comfortably directly below the top bar */}
-      <div className="relative aspect-[10/9] w-full max-w-[540px] max-h-full flex items-center justify-center bg-black overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.9)] rounded-none sm:rounded-2xl border-b sm:border border-white/[0.06]">
+    <div className="relative w-full h-full flex-1 flex flex-col items-center justify-center bg-black overflow-hidden select-none p-0 sm:p-4">
+      {/* 160x144 Native Aspect Ratio Frame (10:9) scaled to fit comfortably */}
+      <div className="relative aspect-[10/9] w-full max-w-[540px] max-h-full flex items-center justify-center bg-black overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.9)] rounded-none sm:rounded-2xl border border-white/[0.06]">
         {/* Main GBC Framebuffer Canvas */}
         <canvas
           ref={canvasRef}
