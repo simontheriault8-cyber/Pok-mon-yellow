@@ -36,11 +36,11 @@ export function getRamOffset(mmu: any): number {
   for (let i = 0x134; i <= 0x142; i++) {
     titleStr += String.fromCharCode(mmu.read(i));
   }
-  return titleStr.includes('JAUNE') ? 1 : 0;
+  return titleStr.includes('JAUNE') ? -1 : 0;
 }
 
 export function resolveAddr(enAddr: number, mmu: any): number {
-  if (enAddr < 0xD000) {
+  if (enAddr < 0xC000 || enAddr > 0xDFFF) {
     return enAddr;
   }
   return enAddr + getRamOffset(mmu);

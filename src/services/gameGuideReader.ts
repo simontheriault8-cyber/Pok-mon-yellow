@@ -112,14 +112,116 @@ export class GameGuideReader {
   }
 
   /**
-   * Reads the active Enemy Pokémon in battle with dynamic offset detection.
+   * Decodes a Game Boy character byte to ASCII/Unicode for Gen 1 Pokémon.
+   */
+  public static decodeChar(byteVal: number): string {
+    if (byteVal >= 0x80 && byteVal <= 0x99) {
+      return String.fromCharCode(65 + (byteVal - 0x80)); // 'A'..'Z'
+    }
+    if (byteVal >= 0xA0 && byteVal <= 0xB9) {
+      return String.fromCharCode(97 + (byteVal - 0xA0)); // 'a'..'z'
+    }
+    if (byteVal >= 0xF6 && byteVal <= 0xFF) {
+      return String.fromCharCode(48 + (byteVal - 0xF6)); // '0'..'9'
+    }
+    switch (byteVal) {
+      case 0x7F: return ' '; // Space
+      case 0xE0: return '\'';
+      case 0xE1: return 'PK';
+      case 0xE2: return 'MN';
+      case 0xE3: return '-';
+      case 0xE6: return '!';
+      case 0xE7: return '?';
+      case 0xE8: return '.';
+      case 0xBA: return 'é';
+      case 0xF0: return '$';
+      case 0xF1: return '×';
+      case 0xF2: return '.';
+      case 0xF3: return '/';
+      case 0xF4: return ',';
+      case 0xF5: return '♀';
+      case 0xEF: return '♂';
+      default: return '';
+    }
+  }
+
+  /**
+   * Reads a line of text from the Game Boy tilemap memory buffer.
+   */
+  public static readTilemapLine(mmu: any, startAddr: number, length: number): string {
+    let result = '';
+    for (let i = 0; i < length; i++) {
+      result += this.decodeChar(mmu.read(startAddr + i));
+    }
+    return result.trim();
+  }
+
+  /**
+   * Scans the battle screen tilemap buffer to extract visible opponent name and level.
+   */
+  private static scanScreenForEnemy(mmu: any): { name: string; level: number; speciesId?: number } | null {
+    const tilemapBase = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
+    
+    // Top-left area of screen: Rows 0, 1, 2, columns 0..12
+    const row0 = this.readTilemapLine(mmu, tilemapBase + 0 * 20, 12).toUpperCase();
+    const row1 = this.readTilemapLine(mmu, tilemapBase + 1 * 20, 12).toUpperCase();
+    const row2 = this.readTilemapLine(mmu, tilemapBase + 2 * 20, 12).toUpperCase();
+    const combinedTopText = `${row0} ${row1} ${row2}`;
+
+    // 1. Try to find a matching Pokémon name in the top text
+    let matchedSpeciesId: number | undefined;
+    let matchedName = '';
+
+    for (const [intIdStr, monInfo] of Object.entries(GEN1_INTERNAL_POKEMON)) {
+      const pName = monInfo.name.toUpperCase();
+      const pNameEn = monInfo.nameEn.toUpperCase();
+      if (
+        (pName.length >= 3 && combinedTopText.includes(pName)) ||
+        (pNameEn.length >= 3 && combinedTopText.includes(pNameEn))
+      ) {
+        matchedSpeciesId = parseInt(intIdStr, 10);
+        matchedName = monInfo.name;
+        break;
+      }
+    }
+
+    // 2. Try to extract the level (e.g., ":L4", "L4", ":L 4", "N4", "LV4")
+    let level = 5;
+    const levelMatch = combinedTopText.match(/(?:L|LV|N|:L)\s*(\d{1,3})/i);
+    if (levelMatch && levelMatch[1]) {
+      const parsed = parseInt(levelMatch[1], 10);
+      if (parsed >= 1 && parsed <= 100) {
+        level = parsed;
+      }
+    }
+
+    if (matchedSpeciesId && matchedName) {
+      return {
+        name: matchedName,
+        level,
+        speciesId: matchedSpeciesId,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Reads the active Enemy Pokémon in battle with dynamic offset detection and screen cross-verification.
    */
   private static readEnemyMon(mmu: any): BattlingMonState | null {
-    const candidateOffsets = [0, -1, 1, -2, 2, -3, 3, -4, 4];
-    
-    // 1. Scan for the full wEnemyMon battle structure around 0xCFE8
+    // 0. Screen visual OCR check
+    const screenEnemy = this.scanScreenForEnemy(mmu);
+
+    // 1. High-priority scan of the primary wEnemyMon address resolved with ROM offset
+    const resolvedEnemyBase = resolveAddr(POKEMON_YELLOW_RAM.ENEMY_MON_SPECIES_EN, mmu);
+    const candidateOffsets = [0, -1, 1, -2, 2, -3, 3];
+
+    let bestMon: BattlingMonState | null = null;
+    let bestScore = -1;
+
     for (const offset of candidateOffsets) {
-      const base = 0xCFE8 + offset;
+      const base = resolvedEnemyBase + offset;
       const speciesId = mmu.read(base);
       const enemyInfo = GEN1_INTERNAL_POKEMON[speciesId];
       if (!enemyInfo) continue;
@@ -131,20 +233,52 @@ export class GameGuideReader {
       const rawType2 = mmu.read(base + 6);
       const statusByte = mmu.read(base + 4);
 
-      // Verify that this is a plausible battle structure
-      if (level >= 1 && level <= 100 && maxHp >= 1 && maxHp <= 1500 && curHp <= maxHp + 10) {
+      // Score this candidate
+      let score = 0;
+
+      // Check level validity
+      if (level >= 1 && level <= 100) {
+        score += 20;
+      }
+
+      // Check max HP validity (must be strictly positive and realistic)
+      if (maxHp >= 5 && maxHp <= 1500) {
+        score += 30;
+      }
+
+      // Check cur HP validity (must be <= maxHp)
+      if (maxHp > 0 && curHp >= 0 && curHp <= maxHp + 10) {
+        score += 25;
+      }
+
+      // If matches the name visible on the screen, this is guaranteed to be the exact target
+      if (screenEnemy && screenEnemy.speciesId === speciesId) {
+        score += 100;
+      }
+
+      // If type byte in RAM matches species data
+      if (RAM_TYPE_MAP[rawType1] === enemyInfo.type1) {
+        score += 15;
+      }
+
+      if (score > bestScore && score >= 50) {
+        bestScore = score;
         const type1: PokemonType = RAM_TYPE_MAP[rawType1] || enemyInfo.type1;
         const type2: PokemonType | undefined =
           rawType1 !== rawType2 && RAM_TYPE_MAP[rawType2] ? RAM_TYPE_MAP[rawType2] : enemyInfo.type2;
         const matchupReport = getDefenderMatchupReport(type1, type2);
 
-        return {
+        const safeMaxHp = maxHp >= 1 ? maxHp : (screenEnemy ? 20 : 20);
+        const safeCurHp = maxHp >= 1 && curHp <= maxHp + 10 ? Math.min(curHp, safeMaxHp) : safeMaxHp;
+        const safeLevel = level >= 1 && level <= 100 ? level : (screenEnemy?.level || 5);
+
+        bestMon = {
           speciesId,
           name: enemyInfo.name,
-          level,
-          curHp: Math.min(curHp, maxHp),
-          maxHp,
-          hpPercent: Math.min(100, Math.max(0, Math.round((curHp / maxHp) * 100))),
+          level: safeLevel,
+          curHp: safeCurHp,
+          maxHp: safeMaxHp,
+          hpPercent: Math.min(100, Math.max(0, Math.round((safeCurHp / safeMaxHp) * 100))),
           type1,
           type2,
           statusStr: this.decodeStatusByte(statusByte),
@@ -153,29 +287,50 @@ export class GameGuideReader {
       }
     }
 
-    // 2. Fallback: Check auxiliary opponent species RAM locations (e.g. wEnemyMonSpecies2 / wCurOpponent)
-    const fallbackAddrs = [0xCFD8, 0xCFD7, 0xCFD9, 0xCFE8, 0xCFE7, 0xD059, 0xD058];
-    for (const addr of fallbackAddrs) {
-      const speciesId = mmu.read(addr);
-      const enemyInfo = GEN1_INTERNAL_POKEMON[speciesId];
-      if (enemyInfo) {
-        const type1 = enemyInfo.type1;
-        const type2 = enemyInfo.type2;
-        const matchupReport = getDefenderMatchupReport(type1, type2);
+    if (bestMon) {
+      return bestMon;
+    }
 
+    // 2. Fallback: If OCR detected enemy on screen, construct verified state
+    if (screenEnemy && screenEnemy.speciesId) {
+      const enemyInfo = GEN1_INTERNAL_POKEMON[screenEnemy.speciesId];
+      if (enemyInfo) {
         return {
-          speciesId,
+          speciesId: screenEnemy.speciesId,
           name: enemyInfo.name,
-          level: 5,
+          level: screenEnemy.level,
           curHp: 20,
           maxHp: 20,
           hpPercent: 100,
-          type1,
-          type2,
+          type1: enemyInfo.type1,
+          type2: enemyInfo.type2,
           statusStr: 'Normal',
-          matchupReport,
+          matchupReport: getDefenderMatchupReport(enemyInfo.type1, enemyInfo.type2),
         };
       }
+    }
+
+    // 3. Fallback: Check wCurOpponent (0xD059 in Yellow EN, 0xD058 in FR, 0xD057 in RB)
+    const oppSpeciesAddr = resolveAddr(0xD059, mmu);
+    const oppSpecies = mmu.read(oppSpeciesAddr);
+    if (GEN1_INTERNAL_POKEMON[oppSpecies]) {
+      const enemyInfo = GEN1_INTERNAL_POKEMON[oppSpecies];
+      const levelAddr = resolveAddr(POKEMON_YELLOW_RAM.ENEMY_MON_LEVEL_EN, mmu);
+      const rawLevel = mmu.read(levelAddr);
+      const safeLevel = rawLevel >= 1 && rawLevel <= 100 ? rawLevel : 5;
+
+      return {
+        speciesId: oppSpecies,
+        name: enemyInfo.name,
+        level: safeLevel,
+        curHp: 20,
+        maxHp: 20,
+        hpPercent: 100,
+        type1: enemyInfo.type1,
+        type2: enemyInfo.type2,
+        statusStr: 'Normal',
+        matchupReport: getDefenderMatchupReport(enemyInfo.type1, enemyInfo.type2),
+      };
     }
 
     return null;
@@ -185,11 +340,12 @@ export class GameGuideReader {
    * Reads the active Player Pokémon in battle with dynamic offset detection.
    */
   private static readPlayerMon(mmu: any): BattlingMonState | null {
+    const resolvedBattleBase = resolveAddr(POKEMON_YELLOW_RAM.BATTLE_MON_SPECIES_EN, mmu);
     const candidateOffsets = [0, -1, 1, -2, 2, -3, 3];
     
     // 1. Scan for the full wBattleMon structure around 0xD014
     for (const offset of candidateOffsets) {
-      const base = 0xD014 + offset;
+      const base = resolvedBattleBase + offset;
       const speciesId = mmu.read(base);
       const playerInfo = GEN1_INTERNAL_POKEMON[speciesId];
       if (!playerInfo) continue;
@@ -222,7 +378,7 @@ export class GameGuideReader {
       }
     }
 
-    // 2. Fallback to Party Mon 1
+    // 2. Fallback to active party mon or Party Mon 1
     const p1Base = resolveAddr(POKEMON_YELLOW_RAM.PARTY_MON1_BASE_EN, mmu);
     const p1Species = mmu.read(p1Base);
     const playerInfo = GEN1_INTERNAL_POKEMON[p1Species];
@@ -270,17 +426,46 @@ export class GameGuideReader {
       if (battleVal === 1 || battleVal === 2) {
         battleTypeRaw = battleVal;
       } else {
-        // Test Red/Blue (0xD057) or French Yellow (0xD055) strictly for 1 or 2
+        // Test Red/Blue (0xD057) or French Yellow (0xD055) or nearby offsets strictly for 1 or 2
         const yellowFrVal = mmu.read(0xD055);
         const redBlueVal = mmu.read(0xD057);
         if (yellowFrVal === 1 || yellowFrVal === 2) {
           battleTypeRaw = yellowFrVal;
         } else if (redBlueVal === 1 || redBlueVal === 2) {
           battleTypeRaw = redBlueVal;
+        } else {
+          // Scan offsets from -3 to +3 around 0xD056 for a valid battle flag (1 or 2)
+          for (let off = -3; off <= 3; off++) {
+            const v = mmu.read(0xD056 + off);
+            if (v === 1 || v === 2) {
+              battleTypeRaw = v;
+              break;
+            }
+          }
         }
       }
 
       let isBattle = battleTypeRaw === 1 || battleTypeRaw === 2;
+
+      // Auxiliary check: Check if battle screen tilemap indicators are present
+      // In Gen 1 battle screen, tilemap (0xC3A0) has battle UI text boxes or cursor
+      if (!isBattle) {
+        const base = resolveAddr(POKEMON_YELLOW_RAM.TILEMAP_BASE_EN, mmu);
+        // Look for battle cursor (0xED) or typical battle text
+        const r14Base = base + 14 * 20;
+        const r16Base = base + 16 * 20;
+        let foundBattleTile = false;
+        for (let c = 7; c <= 17; c++) {
+          if (mmu.read(r14Base + c) === 0xED || mmu.read(r16Base + c) === 0xED) {
+            foundBattleTile = true;
+            break;
+          }
+        }
+        if (foundBattleTile) {
+          isBattle = true;
+          battleTypeRaw = 1;
+        }
+      }
 
       // Verify that if in battle, we can read a valid enemy Pokémon
       let enemyMonState: BattlingMonState | null = null;
@@ -290,9 +475,20 @@ export class GameGuideReader {
         enemyMonState = this.readEnemyMon(mmu);
         playerMonState = this.readPlayerMon(mmu);
 
-        // If no enemy mon can be found at all, treat as overworld to avoid stuck battle UI
-        if (!enemyMonState) {
-          isBattle = false;
+        // Even if enemy mon is still loading in RAM, don't drop out of battle mode if battleVal is confirmed
+        if (!enemyMonState && (battleTypeRaw === 1 || battleTypeRaw === 2)) {
+          // Construct fallback enemy mon state
+          enemyMonState = {
+            speciesId: 1,
+            name: 'Enemy Pokémon',
+            level: 5,
+            curHp: 20,
+            maxHp: 20,
+            hpPercent: 100,
+            type1: 'Normal',
+            statusStr: 'Normal',
+            matchupReport: getDefenderMatchupReport('Normal', undefined),
+          };
         }
       }
 

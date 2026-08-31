@@ -609,6 +609,11 @@ export default function App() {
           filter={settings.videoFilter}
           speed={speed}
           notification={notification}
+          isBotRunning={isBotRunning}
+          botState={botState}
+          isHealRunning={isHealRunning}
+          batterySaverBotScreenOff={settings.batterySaverBotScreenOff ?? true}
+          onToggleBot={handleToggleBot}
           onOpenRomLibrary={() => setShowRomLibrary(true)}
         />
       </main>
