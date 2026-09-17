@@ -23,7 +23,9 @@ import {
   SlidersHorizontal,
   HardDrive,
   HeartPulse,
-  Compass
+  Compass,
+  Download,
+  Upload
 } from 'lucide-react';
 import { TrainerBotMode } from '../services/simpleTrainerBot';
 import { AutoHealProgress } from '../services/localNavigation';
@@ -55,7 +57,7 @@ interface ControlBarProps {
   onSpeedChange: (speed: SpeedMultiplier) => void;
   onQuickSave: () => void;
   onQuickLoad: () => void;
-  onOpenSaveModal: () => void;
+  onOpenSaveModal: (tab?: 'files' | 'slots') => void;
   onOpenRomLibrary: () => void;
   onOpenSettings: () => void;
   onVolumeChange: (vol: number) => void;
@@ -302,7 +304,7 @@ export function ControlBar({
                     <button
                       onClick={() => {
                         setIsMenuOpen(false);
-                        onOpenSaveModal();
+                        onOpenSaveModal('slots');
                       }}
                       disabled={!hasRom}
                       className="text-[11px] font-semibold text-violet-400 hover:text-violet-300 flex items-center gap-1 disabled:opacity-30 cursor-pointer"
@@ -335,6 +337,45 @@ export function ControlBar({
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                       <span>Charger (F3)</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Section Fichiers de Sauvegarde (.sav & .state) */}
+                <div className="p-3 rounded-2xl bg-white/[0.025] border border-white/[0.07] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <HardDrive className="w-3.5 h-3.5 text-violet-400" />
+                      <span>Fichiers de Sauvegarde</span>
+                    </span>
+                    <span className="text-[10px] text-zinc-500 font-mono">.sav / .state</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenSaveModal('files');
+                      }}
+                      disabled={!hasRom}
+                      className="p-2 rounded-xl bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+                      title="Créer et télécharger un fichier de sauvegarde (.sav ou .state)"
+                    >
+                      <Download className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Créer fichier</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenSaveModal('files');
+                      }}
+                      disabled={!hasRom}
+                      className="p-2 rounded-xl bg-violet-600/15 hover:bg-violet-600/25 border border-violet-500/30 text-violet-300 text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+                      title="Uploader ou glisser-déposer un fichier de sauvegarde (.sav ou .state)"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-violet-400" />
+                      <span>Uploader fichier</span>
                     </button>
                   </div>
                 </div>

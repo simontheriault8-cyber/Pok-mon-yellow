@@ -76,6 +76,7 @@ export default function App() {
 
   // Modals
   const [showSaveModal, setShowSaveModal] = useState<boolean>(false);
+  const [saveModalTab, setSaveModalTab] = useState<'files' | 'slots'>('files');
   const [showRomLibrary, setShowRomLibrary] = useState<boolean>(false);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [isCustomizingTouch, setIsCustomizingTouch] = useState<boolean>(false);
@@ -91,6 +92,19 @@ export default function App() {
       setNotification(null);
     }, 2800);
   }, []);
+
+  const handleOpenSaveModal = useCallback((tab: 'files' | 'slots' = 'files') => {
+    setSaveModalTab(tab);
+    setShowSaveModal(true);
+  }, []);
+
+  const handleReloadRomWithSram = useCallback(async (sramData: Uint8Array) => {
+    if (!emulator || !currentRom) return;
+    await StorageService.saveSram(currentRom.id, sramData);
+    emulator.loadROM(currentRom.data, sramData);
+    setIsPaused(false);
+    showToast('💾 Sauvegarde cartouche (.sav) injectée ! Partie prête.');
+  }, [emulator, currentRom, showToast]);
 
   // Initialize Emulator & Load Settings
   useEffect(() => {
@@ -590,7 +604,7 @@ export default function App() {
         onSpeedChange={handleSpeedChange}
         onQuickSave={handleQuickSave}
         onQuickLoad={handleQuickLoad}
-        onOpenSaveModal={() => setShowSaveModal(true)}
+        onOpenSaveModal={handleOpenSaveModal}
         onOpenRomLibrary={() => setShowRomLibrary(true)}
         onOpenSettings={() => setShowSettings(true)}
         onVolumeChange={handleVolumeChange}
@@ -681,7 +695,10 @@ export default function App() {
           emulator={emulator}
           currentRomId={currentRom?.id || null}
           currentRomTitle={currentRom?.title || null}
+          currentRomData={currentRom?.data || null}
           onNotify={showToast}
+          onReloadRomWithSram={handleReloadRomWithSram}
+          initialTab={saveModalTab}
         />
       </ErrorBoundary>
 
